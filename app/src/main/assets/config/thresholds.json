@@ -1,0 +1,4 @@
+{
+  "confidence_threshold": 0.5,
+  "iou_threshold": 0.45
+}

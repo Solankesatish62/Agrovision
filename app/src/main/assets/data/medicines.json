@@ -1,0 +1,11 @@
+[
+  {
+    "id": "MED001",
+    "name": "Imidacloprid",
+    "company": "XYZ Agro",
+    "supportedCrops": ["Cotton", "Rice"],
+    "supportedDiseases": ["Aphids"],
+    "usageInstructions": "Use 5ml per liter",
+    "warnings": "Do not overuse"
+  }
+]

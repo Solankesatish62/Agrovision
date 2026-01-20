@@ -1,0 +1,20 @@
+# Android / Gradle
+*.apk
+*.aab
+/build/
+.gradle/
+.idea/
+local.properties
+
+# ML / AI
+*.pt
+*.h5
+*.onnx
+*.tflite
+/runs/
+/outputs/
+/datasets/
+
+# OS
+.DS_Store
+Thumbs.db
