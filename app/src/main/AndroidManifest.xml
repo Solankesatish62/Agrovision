@@ -21,8 +21,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Agrovision">
 
+        <!-- Entry Point: HomeActivity (Scanning Screen) -->
         <activity
-            android:name="com.agrovision.kiosk.MainActivity"
+            android:name=".ui.home.HomeActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="landscape"
@@ -40,8 +41,14 @@
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-
         </activity>
+
+        <!-- Fallback/Container Activity -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.Agrovision.Fullscreen" />
 
         <receiver
             android:name=".watchdog.BootReceiver"

@@ -1,8 +1,202 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="#FFFFFF"
+    android:padding="24dp">
 
-    <!-- 50/50 split-screen layout will be added here -->
+    <!-- =====================================================
+         1. STANDARD RESULT LAYOUT (Known Medicines)
+         ===================================================== -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/standardResultLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="visible"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+
+    <LinearLayout
+            android:id="@+id/titleContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <TextView
+                android:id="@+id/tvMedicineName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#000000"
+                android:textSize="32sp"
+                android:textStyle="bold"
+                tools:text="Medicine Name" />
+
+            <ImageView
+                android:id="@+id/ivMedicineIcon"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="12dp"
+                android:src="@drawable/ic_launcher_foreground"
+                app:tint="#4CAF50" />
+        </LinearLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/infoList"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_marginTop="24dp"
+            android:layout_marginEnd="32dp"
+            app:layout_constraintBottom_toTopOf="@+id/tvFooterTip"
+            app:layout_constraintEnd_toStartOf="@+id/guidelineCenter"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/titleContainer"
+            tools:listitem="@layout/item_result_info" />
+
+        <TextView
+            android:id="@+id/tvFooterTip"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="टीप: परिस्थितीनुसार परिणाम बदलू शकतो"
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:gravity="center"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@+id/guidelineCenter"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guidelineCenter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_percent="0.55" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/imageCard"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="0dp"
+            app:strokeColor="#F0F0F0"
+            app:strokeWidth="1dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toEndOf="@id/guidelineCenter"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <androidx.viewpager2.widget.ViewPager2
+                android:id="@+id/imagePager"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#FAFAFA" />
+        </com.google.android.material.card.MaterialCardView>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- =====================================================
+         2. UNKNOWN RESULT LAYOUT (Product Not Found)
+         ===================================================== -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/unknownResultLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        tools:visibility="visible">
+
+
+    <com.google.android.material.card.MaterialCardView
+            android:layout_width="550dp"
+            android:layout_height="wrap_content"
+            app:cardBackgroundColor="#FEEBEB"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="4dp"
+            app:strokeColor="#F9D7D7"
+            app:strokeWidth="1dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <TextView
+                android:id="@+id/tvUnknownHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="32dp"
+                android:lineSpacingExtra="8dp"
+                android:textColor="#7A2E2E"
+                android:textSize="20sp"
+                tools:text="या scan मध्ये Medicine-A हे औषधं system मध्ये उपलब्ध नाही.\nआम्ही त्यावर काम करत आहोत आणि लवकरच उपलब्ध करण्यात येईल." />
+        </com.google.android.material.card.MaterialCardView>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- =====================================================
+         3. CONTROLS CONTAINER (Always Visible)
+         ===================================================== -->
+    <LinearLayout
+        android:id="@+id/controlsContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnNewScan"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="wrap_content"
+            android:layout_height="56dp"
+            android:text="नवीन Scan"
+            android:textColor="#333333"
+            app:cornerRadius="16dp"
+            app:icon="@android:drawable/ic_menu_search" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:background="@drawable/bg_search"
+            android:padding="4dp">
+
+            <ImageButton
+                android:id="@+id/btnPrev"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_media_previous" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center_vertical"
+                android:background="#DDDDDD" />
+
+            <ImageButton
+                android:id="@+id/btnNext"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_media_next" />
+        </LinearLayout>
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/btnPlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:src="@android:drawable/ic_media_pause"
+            app:backgroundTint="#FFFFFF"
+            app:fabSize="normal" />
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

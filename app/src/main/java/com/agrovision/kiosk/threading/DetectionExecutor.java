@@ -82,6 +82,14 @@ public final class DetectionExecutor {
     }
 
     /**
+     * Returns the underlying ThreadPoolExecutor.
+     * Use this when you need the shared vision pipeline thread.
+     */
+    public static ThreadPoolExecutor get() {
+        return EXECUTOR;
+    }
+
+    /**
      * Submit a YOLO inference task.
      *
      * BEHAVIOR:
