@@ -1,5 +1,6 @@
 package com.agrovision.kiosk.vision.recognition;
 
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
@@ -42,7 +43,7 @@ public final class OcrProcessor {
         void onResult(@NonNull String normalizedText);
     }
 
-    public OcrProcessor() {
+    public OcrProcessor(Context appContext) {
         recognizer = TextRecognition.getClient(
                 TextRecognizerOptions.DEFAULT_OPTIONS
         );

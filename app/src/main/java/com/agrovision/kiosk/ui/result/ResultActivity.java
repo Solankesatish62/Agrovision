@@ -15,8 +15,10 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
 
 import com.agrovision.kiosk.R;
+import com.agrovision.kiosk.state.AppState;
 import com.agrovision.kiosk.state.StateEvent;
 import com.agrovision.kiosk.state.StateMachine;
+import com.agrovision.kiosk.state.StateObserver;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
 import com.agrovision.kiosk.util.LogUtils;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
@@ -36,7 +38,8 @@ import java.util.List;
  * - Decide known/unknown
  * - Access DB/network
  */
-public final class ResultActivity extends AppCompatActivity {
+public final class ResultActivity extends AppCompatActivity
+        implements StateObserver {
 
     public static final String EXTRA_SCAN_RESULTS =
             "com.agrovision.kiosk.EXTRA_SCAN_RESULTS";
@@ -84,6 +87,20 @@ public final class ResultActivity extends AppCompatActivity {
         renderCurrent();
         setupControls();
         startTimer();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        StateMachine.getInstance(getApplicationContext())
+                .addObserver(this);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        StateMachine.getInstance(getApplicationContext())
+                .removeObserver(this);
     }
 
     @Override
@@ -161,12 +178,18 @@ public final class ResultActivity extends AppCompatActivity {
             restartTimer();
         });
 
-        btnPlay.setOnClickListener(v -> togglePause());
+        btnPlay.setOnClickListener(v -> {
+            StateMachine.getInstance(getApplicationContext())
+                    .transition(
+                        isPaused
+                            ? StateEvent.RESUME_REQUESTED
+                            : StateEvent.PAUSE_REQUESTED
+                    );
+        });
 
         btnNewScan.setOnClickListener(v -> {
             StateMachine.getInstance(getApplicationContext())
                     .transition(StateEvent.NEW_SCAN_REQUESTED);
-            finish();
         });
     }
 
@@ -190,6 +213,38 @@ public final class ResultActivity extends AppCompatActivity {
         } else {
             btnPlay.setImageResource(android.R.drawable.ic_media_pause);
             restartTimer();
+        }
+    }
+
+    @Override
+    public void onStateChanged(AppState state) {
+
+        switch (state) {
+
+            case RESULT_AUTO:
+            case RESULT_MANUAL_NAV:
+                // Active result viewing → timers allowed
+                isPaused = false;
+                btnPlay.setImageResource(android.R.drawable.ic_media_pause);
+                restartTimer();
+                break;
+
+            case RESULT_PAUSED:
+                // Freeze UX
+                isPaused = true;
+                btnPlay.setImageResource(android.R.drawable.ic_media_play);
+                stopTimer();
+                break;
+
+            case READY:
+            case IDLE:
+                // Exit result screen
+                finish();
+                break;
+
+            default:
+                // Ignore others
+                break;
         }
     }
 

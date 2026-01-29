@@ -18,6 +18,8 @@ import java.util.List;
  */
 public final class YoloDetector {
 
+    private static final float MIN_YOLO_CONFIDENCE = 0.50f;
+
     private final YoloModel yoloModel;
 
     public YoloDetector(@NonNull YoloModel yoloModel) {
@@ -32,15 +34,17 @@ public final class YoloDetector {
         List<YoloModel.RawDetection> rawDetections =
                 yoloModel.runInference(bitmap);
 
-        // 🔒 Defensive: treat null as no detections
         if (rawDetections == null || rawDetections.isEmpty()) {
             return Collections.emptyList();
         }
 
-        List<DetectionResult> results =
-                new ArrayList<>(rawDetections.size());
+        List<DetectionResult> results = new ArrayList<>();
 
         for (YoloModel.RawDetection raw : rawDetections) {
+
+            if (raw.confidence < MIN_YOLO_CONFIDENCE) {
+                continue;
+            }
 
             RectF box = new RectF(
                     raw.left,
@@ -60,3 +64,4 @@ public final class YoloDetector {
         return results;
     }
 }
+

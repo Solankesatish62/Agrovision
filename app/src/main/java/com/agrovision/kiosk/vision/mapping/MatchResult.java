@@ -9,14 +9,27 @@ import com.agrovision.kiosk.data.model.Medicine;
  *
  * Immutable value object representing the outcome
  * of matching OCR text against the medicine catalog.
+ *
+ * This class is a PURE RESULT:
+ * - No logic
+ * - No mutation
+ * - No side effects
  */
 public final class MatchResult {
 
+    /* =========================================================
+       MATCH TYPE
+       ========================================================= */
+
     public enum MatchType {
-        EXACT,
-        FUZZY,
-        NONE
+        EXACT,      // Perfect confident match
+        FUZZY,      // Matched but confidence < 1.0
+        NONE        // No match
     }
+
+    /* =========================================================
+       STATE (IMMUTABLE)
+       ========================================================= */
 
     @Nullable
     private final Medicine medicine;
@@ -27,11 +40,12 @@ public final class MatchResult {
 
     private final MatchType matchType;
 
-    private MatchResult(@Nullable Medicine medicine,
-                        float confidence,
-                        String matchedText,
-                        MatchType matchType) {
-
+    private MatchResult(
+            @Nullable Medicine medicine,
+            float confidence,
+            String matchedText,
+            MatchType matchType
+    ) {
         this.medicine = medicine;
         this.confidence = confidence;
         this.matchedText = matchedText == null ? "" : matchedText;
@@ -39,12 +53,13 @@ public final class MatchResult {
     }
 
     /* =========================================================
-       FACTORY METHODS (SAFE & EXPLICIT)
+       FACTORY METHODS (ONLY WAY TO CREATE)
        ========================================================= */
 
-    public static MatchResult exact(Medicine medicine,
-                                    String matchedText) {
-
+    public static MatchResult exact(
+            Medicine medicine,
+            String matchedText
+    ) {
         if (medicine == null) {
             throw new IllegalArgumentException(
                     "Exact match requires non-null Medicine"
@@ -59,10 +74,11 @@ public final class MatchResult {
         );
     }
 
-    public static MatchResult fuzzy(Medicine medicine,
-                                    float confidence,
-                                    String matchedText) {
-
+    public static MatchResult fuzzy(
+            Medicine medicine,
+            float confidence,
+            String matchedText
+    ) {
         if (medicine == null) {
             throw new IllegalArgumentException(
                     "Fuzzy match requires non-null Medicine"
@@ -84,7 +100,6 @@ public final class MatchResult {
     }
 
     public static MatchResult none(String matchedText) {
-
         return new MatchResult(
                 null,
                 0.0f,
@@ -94,7 +109,26 @@ public final class MatchResult {
     }
 
     /* =========================================================
-       READ-ONLY ACCESSORS
+       SEMANTIC ACCESSORS
+       ========================================================= */
+
+    /**
+     * @return true if any medicine matched (EXACT or FUZZY)
+     */
+    public boolean isMatched() {
+        return matchType != MatchType.NONE;
+    }
+
+    /**
+     * @return true if match exists but confidence is risky
+     * Used by pipeline to mark ScanResult as low confidence.
+     */
+    public boolean isLowConfidence() {
+        return matchType == MatchType.FUZZY && confidence < 0.75f;
+    }
+
+    /* =========================================================
+       RAW ACCESSORS (READ-ONLY)
        ========================================================= */
 
     @Nullable
@@ -112,9 +146,5 @@ public final class MatchResult {
 
     public MatchType getMatchType() {
         return matchType;
-    }
-
-    public boolean isMatched() {
-        return matchType != MatchType.NONE;
     }
 }

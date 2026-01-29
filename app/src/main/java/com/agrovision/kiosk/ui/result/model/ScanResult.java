@@ -23,7 +23,7 @@ public final class ScanResult implements Serializable {
     public final String rawOcrText;
     public final boolean isConfidenceLow;
 
-    private ScanResult(
+    public ScanResult(
             ResultType resultType,
             String medicineId,
             String displayName,

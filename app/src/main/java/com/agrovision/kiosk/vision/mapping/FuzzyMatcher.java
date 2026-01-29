@@ -7,15 +7,25 @@ import java.util.List;
 /**
  * FuzzyMatcher
  *
- * Performs approximate string matching between
+ * Performs APPROXIMATE string matching between
  * normalized OCR text and known medicines.
+ *
+ * SAFETY RULES:
+ * - Fuzzy NEVER overrides exact match
+ * - Fuzzy NEVER guesses below confidence threshold
+ * - Fuzzy NEVER impersonates EXACT unless strings truly match
  */
 public final class FuzzyMatcher {
 
-    private static final float MIN_CONFIDENCE = 0.60f;
+    // Minimum confidence to accept fuzzy match
+    private static final float MIN_CONFIDENCE = 0.75f;
+
+    // Near-perfect similarity threshold
     private static final float EXACT_MATCH_THRESHOLD = 0.999f;
 
-    private FuzzyMatcher() {}
+    private FuzzyMatcher() {
+        // no instances
+    }
 
     public static MatchResult match(String normalizedText,
                                     List<Medicine> medicines) {
@@ -31,11 +41,12 @@ public final class FuzzyMatcher {
 
         for (Medicine medicine : medicines) {
 
-            // 🔧 FIX: Use existing API
-            String candidate = medicine.getName();
-            if (candidate == null || candidate.isEmpty()) continue;
+            String candidate = normalizeName(medicine.getName());
+            if (candidate.isEmpty()) continue;
 
-            float score = similarity(normalizedText, candidate);
+            String reducedOcr = reduceOcr(normalizedText, candidate);
+
+            float score = similarity(reducedOcr, candidate);
 
             if (score > bestScore) {
                 bestScore = score;
@@ -43,12 +54,16 @@ public final class FuzzyMatcher {
             }
         }
 
+        // No reliable fuzzy match
         if (bestMedicine == null || bestScore < MIN_CONFIDENCE) {
             return MatchResult.none(normalizedText);
         }
 
-        // Perfect (or near-perfect) match → EXACT
-        if (bestScore >= EXACT_MATCH_THRESHOLD) {
+        // Promote to EXACT only if strings truly match
+        String candidate = normalizeName(bestMedicine.getName());
+        if (bestScore >= EXACT_MATCH_THRESHOLD &&
+                normalizedText.equals(candidate)) {
+
             return MatchResult.exact(bestMedicine, normalizedText);
         }
 
@@ -56,7 +71,31 @@ public final class FuzzyMatcher {
     }
 
     /* =========================================================
-       STRING SIMILARITY
+       NORMALIZATION & REDUCTION
+       ========================================================= */
+
+    private static String normalizeName(String name) {
+        if (name == null) return "";
+
+        return name.toUpperCase()
+                .replaceAll("[^A-Z0-9 ]", "")
+                .trim();
+    }
+
+    /**
+     * Reduce OCR noise by comparing only relevant segment.
+     */
+    private static String reduceOcr(String ocr, String candidate) {
+
+        if (ocr.contains(candidate)) {
+            return candidate;
+        }
+
+        return ocr;
+    }
+
+    /* =========================================================
+       STRING SIMILARITY (LEVENSHTEIN)
        ========================================================= */
 
     private static float similarity(String a, String b) {

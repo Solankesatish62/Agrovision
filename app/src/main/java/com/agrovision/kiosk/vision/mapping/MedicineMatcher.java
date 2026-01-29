@@ -66,7 +66,7 @@ public final class MedicineMatcher {
 
         for (Medicine medicine : medicines) {
 
-            String name = medicine.getName();
+            String name = medicine.getName().toUpperCase().trim();
             if (name == null || name.isEmpty()) {
                 continue;
             }

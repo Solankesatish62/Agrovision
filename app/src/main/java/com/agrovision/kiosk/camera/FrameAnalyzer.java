@@ -60,7 +60,7 @@ public final class FrameAnalyzer implements ImageAnalysis.Analyzer {
             LogUtils.e("FrameAnalyzer failure", e);
 
         } finally {
-            image.close();
+            //image.close();
             isProcessing.set(false);
         }
     }

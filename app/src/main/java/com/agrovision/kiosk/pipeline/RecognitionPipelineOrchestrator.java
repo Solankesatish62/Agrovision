@@ -1,8 +1,11 @@
 package com.agrovision.kiosk.pipeline;
 
-import com.agrovision.kiosk.data.mapper.MedicineMapper;
+import com.agrovision.kiosk.data.model.Medicine;
+import com.agrovision.kiosk.ui.result.mapper.ResultInfoMapper;
+import com.agrovision.kiosk.ui.result.model.ResultInfoItem;
 import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
+import com.agrovision.kiosk.vision.mapping.MatchResult;
 import com.agrovision.kiosk.vision.mapping.MedicineMatcher;
 
 import java.util.ArrayList;
@@ -12,42 +15,82 @@ import java.util.List;
 /**
  * RecognitionPipelineOrchestrator
  *
- * SINGLE responsibility:
- * Convert raw recognition tokens into ordered ScanResults.
+ * PURPOSE:
+ * - Convert raw OCR tokens into ordered ScanResults
+ *
+ * RULES:
+ * - NO UI
+ * - NO Android
+ * - NO DB
+ * - NO networking
  */
 public final class RecognitionPipelineOrchestrator {
 
-    private final MedicineMatcher matcher;
-    private final MedicineMapper mapper;
-    // Note: Assuming these support classes/interfaces will be defined as per pattern
-    // private final UnknownMedicineReporter reporter; 
+    private final List<Medicine> medicineCatalog;
 
-    public RecognitionPipelineOrchestrator(
-            MedicineMatcher matcher,
-            MedicineMapper mapper
-    ) {
-        this.matcher = matcher;
-        this.mapper = mapper;
+    public RecognitionPipelineOrchestrator(List<Medicine> medicineCatalog) {
+        this.medicineCatalog = medicineCatalog;
     }
 
     /**
-     * Resolves a list of detected raw names into a structured ScanResult queue.
+     * Resolve raw OCR texts into ScanResult queue.
      */
-    public List<ScanResult> resolve(List<String> detectedNames) {
+    public List<ScanResult> resolve(List<String> rawOcrTexts) {
 
         List<ScanResult> results = new ArrayList<>();
 
-        if (detectedNames == null || detectedNames.isEmpty()) {
+        if (rawOcrTexts == null || rawOcrTexts.isEmpty()) {
             return results;
         }
 
-        for (String rawName : detectedNames) {
-            // Logic to match and map would go here
-            // This is a structural skeleton as requested
+        for (String rawText : rawOcrTexts) {
+
+            if (rawText == null || rawText.trim().isEmpty()) {
+                continue;
+            }
+
+            String normalized = rawText.trim().toUpperCase();
+
+            MatchResult match =
+                    MedicineMatcher.match(normalized, medicineCatalog);
+
+            ScanResult result;
+
+            if (match.isMatched() && match.getMedicine() != null) {
+
+                Medicine medicine = match.getMedicine();
+
+                List<ResultInfoItem> infoItems =
+                        ResultInfoMapper.fromMedicine(medicine);
+
+                result = new ScanResult(
+                        ResultType.KNOWN,
+                        medicine.getId(),
+                        medicine.getName(),
+                        Collections.emptyList(),   // images later
+                        infoItems,
+                        rawText,
+                        match.isLowConfidence()
+                );
+
+            } else {
+
+                result = new ScanResult(
+                        ResultType.UNKNOWN,
+                        null,
+                        null,
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        rawText,
+                        false
+                );
+            }
+
+            results.add(result);
         }
 
-        // 🟢 PRIORITIZE KNOWN RESULTS
-        Collections.sort(results, (a, b) ->
+        // ✅ KNOWN first, UNKNOWN last
+        results.sort((a, b) ->
                 Boolean.compare(
                         a.resultType == ResultType.UNKNOWN,
                         b.resultType == ResultType.UNKNOWN
