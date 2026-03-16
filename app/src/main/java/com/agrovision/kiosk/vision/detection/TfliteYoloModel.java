@@ -21,7 +21,7 @@ import java.util.List;
 
 public final class TfliteYoloModel implements YoloModel, AutoCloseable {
 
-    private static final String DEFAULT_MODEL_PATH = "models/yolo_best.tflite";
+    private static final String DEFAULT_MODEL_PATH = "models/best_float32.tflite";
 
     private final Interpreter interpreter;
 
@@ -140,10 +140,14 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
             float w  = get(0, i, 2);
             float h  = get(0, i, 3);
 
-            float left = (cx - w / 2f) * srcW / inputWidth;   // 🔒 FIX #4
-            float top = (cy - h / 2f) * srcH / inputHeight;
-            float right = (cx + w / 2f) * srcW / inputWidth;
-            float bottom = (cy + h / 2f) * srcH / inputHeight;
+            // 🛡️ SMART SCALING: Detect if coordinates are normalized (0-1) or pixel-based
+            float xMultiplier = (cx <= 1.1f && w <= 1.1f) ? srcW : (float) srcW / inputWidth;
+            float yMultiplier = (cy <= 1.1f && h <= 1.1f) ? srcH : (float) srcH / inputHeight;
+
+            float left = (cx - w / 2f) * xMultiplier;
+            float top = (cy - h / 2f) * yMultiplier;
+            float right = (cx + w / 2f) * xMultiplier;
+            float bottom = (cy + h / 2f) * yMultiplier;
 
             detections.add(new RawDetection(left, top, right, bottom, conf, 0));
         }

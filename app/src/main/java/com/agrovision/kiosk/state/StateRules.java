@@ -31,7 +31,7 @@ public final class StateRules {
         // ================= SCANNING =================
         Map<StateEvent, AppState> scanning = new EnumMap<>(StateEvent.class);
         scanning.put(StateEvent.MATCH_FOUND, AppState.RESULT_AUTO);
-        scanning.put(StateEvent.MATCH_NOT_FOUND, AppState.UNKNOWN_NOTE);
+        scanning.put(StateEvent.MATCH_NOT_FOUND, AppState.RESULT_UNKNOWN); // 🔒 FIXED TYPO
         scanning.put(StateEvent.OBJECT_REMOVED, AppState.READY);
         scanning.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
         transitionTable.put(AppState.SCANNING, scanning);
@@ -56,12 +56,13 @@ public final class StateRules {
         paused.put(StateEvent.OBJECT_REMOVED, AppState.READY);
         transitionTable.put(AppState.RESULT_PAUSED, paused);
 
-        // ================= UNKNOWN_NOTE =================
-        Map<StateEvent, AppState> unknown = new EnumMap<>(StateEvent.class);
+        // ================= RESULT_UNKNOWN =================
+        Map<StateEvent, AppState> unknown = new EnumMap<>(StateEvent.class); // 🔒 FIXED: Renamed section
         unknown.put(StateEvent.MANUAL_SELECTION, AppState.RESULT_MANUAL_NAV);
         unknown.put(StateEvent.OBJECT_REMOVED, AppState.READY);
         unknown.put(StateEvent.NEW_SCAN_REQUESTED, AppState.SCANNING);
-        transitionTable.put(AppState.UNKNOWN_NOTE, unknown);
+        unknown.put(StateEvent.RESULT_TIMEOUT, AppState.READY); 
+        transitionTable.put(AppState.RESULT_UNKNOWN, unknown); // 🔒 FIXED: Used correct enum key
 
         // ================= IDLE =================
         Map<StateEvent, AppState> idle = new EnumMap<>(StateEvent.class);

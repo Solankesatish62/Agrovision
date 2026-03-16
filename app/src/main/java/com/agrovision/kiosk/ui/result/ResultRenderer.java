@@ -95,10 +95,13 @@ public final class ResultRenderer {
         standardLayout.setVisibility(View.GONE);
         unknownLayout.setVisibility(View.VISIBLE);
 
-        // Show raw OCR text for transparency
-        tvUnknownHeader.setText(
-                String.format("अपरिचित उत्पादन: %s", result.rawOcrText)
+        // 🚀 Rule 7: Update message for UX
+        String message = String.format(
+                "अपरिचित उत्पादन: %s\n\nहे औषध ओळखले गेले नाही. पुन्हा स्कॅन करण्यासाठी परत जात आहे...", 
+                result.rawOcrText
         );
+        
+        tvUnknownHeader.setText(message);
     }
 
     private void renderImages(List<Integer> imageResIds) {
@@ -125,4 +128,3 @@ public final class ResultRenderer {
         );
     }
 }
-

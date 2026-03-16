@@ -2,4 +2,12 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    
+    <!-- Info Card Backgrounds (Figma Match) -->
+    <color name="bg_info_success_light">#E8F5E9</color> <!-- Light Green for Crops/Usage -->
+    <color name="bg_info_pest_light">#E3F2FD</color>    <!-- Light Blue for Pests -->
+    <color name="bg_info_timing_light">#FFF3E0</color>  <!-- Light Orange for Timing -->
+    <color name="bg_info_warning_light">#FFEBEE</color> <!-- Light Red for Caution -->
+    <color name="bg_info_info_light">#F3E5F5</color>    <!-- Light Purple for Others -->
+    
 </resources>

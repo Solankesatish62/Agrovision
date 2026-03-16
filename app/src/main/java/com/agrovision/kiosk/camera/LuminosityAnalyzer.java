@@ -16,12 +16,11 @@ import java.nio.ByteBuffer;
  *
  * DESIGN:
  * - Non-destructive buffer access
- * - No allocations
- * - Deterministic
+ * - High performance sampling (stride 10)
  */
 public final class LuminosityAnalyzer {
 
-    private static final int DARKNESS_THRESHOLD = 45;
+    private static final int DARKNESS_THRESHOLD = 25;
 
     /**
      * Returns true if the frame is too dark.
@@ -51,11 +50,12 @@ public final class LuminosityAnalyzer {
         long sum = 0;
 
         // ✅ Absolute indexing — does NOT move buffer position
-        for (int i = 0; i < pixelCount; i++) {
+        // Optimized: sample every 10th pixel for performance
+        for (int i = 0; i < pixelCount; i += 10) {
             sum += (buffer.get(i) & 0xFF);
         }
 
-        int averageLuminance = (int) (sum / pixelCount);
+        int averageLuminance = (int) (sum / (pixelCount / 10));
         return averageLuminance < DARKNESS_THRESHOLD;
     }
 }

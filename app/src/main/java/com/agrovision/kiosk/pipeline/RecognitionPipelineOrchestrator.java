@@ -15,88 +15,62 @@ import java.util.List;
 /**
  * RecognitionPipelineOrchestrator
  *
- * PURPOSE:
- * - Convert raw OCR tokens into ordered ScanResults
+ * Responsibility: Bridge between OCR text and Business Models (Medicine/ScanResult).
+ * Runs in the Application Layer.
  *
- * RULES:
- * - NO UI
- * - NO Android
- * - NO DB
- * - NO networking
+ * It uses a pre-loaded medicine catalog for matching to ensure performance.
  */
 public final class RecognitionPipelineOrchestrator {
 
     private final List<Medicine> medicineCatalog;
 
     public RecognitionPipelineOrchestrator(List<Medicine> medicineCatalog) {
-        this.medicineCatalog = medicineCatalog;
+        this.medicineCatalog = medicineCatalog != null ? medicineCatalog : Collections.emptyList();
     }
 
     /**
-     * Resolve raw OCR texts into ScanResult queue.
+     * Resolves a list of normalized OCR strings into ScanResults.
+     * This method is strictly for matching and does not access the database or repository.
      */
-    public List<ScanResult> resolve(List<String> rawOcrTexts) {
-
+    public List<ScanResult> resolve(List<String> normalizedTexts) {
         List<ScanResult> results = new ArrayList<>();
 
-        if (rawOcrTexts == null || rawOcrTexts.isEmpty()) {
+        if (normalizedTexts == null || normalizedTexts.isEmpty()) {
             return results;
         }
 
-        for (String rawText : rawOcrTexts) {
+        for (String text : normalizedTexts) {
+            if (text == null || text.trim().isEmpty()) continue;
 
-            if (rawText == null || rawText.trim().isEmpty()) {
-                continue;
-            }
-
-            String normalized = rawText.trim().toUpperCase();
-
-            MatchResult match =
-                    MedicineMatcher.match(normalized, medicineCatalog);
-
-            ScanResult result;
+            // Perform matching logic using the pre-loaded catalog
+            MatchResult match = MedicineMatcher.match(text, medicineCatalog);
 
             if (match.isMatched() && match.getMedicine() != null) {
-
                 Medicine medicine = match.getMedicine();
+                List<ResultInfoItem> infoItems = ResultInfoMapper.fromMedicine(medicine);
 
-                List<ResultInfoItem> infoItems =
-                        ResultInfoMapper.fromMedicine(medicine);
-
-                result = new ScanResult(
+                results.add(new ScanResult(
                         ResultType.KNOWN,
                         medicine.getId(),
                         medicine.getName(),
-                        Collections.emptyList(),   // images later
+                        Collections.emptyList(), // Images can be added here if available
                         infoItems,
-                        rawText,
+                        text,
                         match.isLowConfidence()
-                );
-
+                ));
             } else {
-
-                result = new ScanResult(
+                // If no match found, create an UNKNOWN result
+                results.add(new ScanResult(
                         ResultType.UNKNOWN,
                         null,
-                        null,
+                        "Unknown Medicine",
                         Collections.emptyList(),
                         Collections.emptyList(),
-                        rawText,
+                        text,
                         false
-                );
+                ));
             }
-
-            results.add(result);
         }
-
-        // ✅ KNOWN first, UNKNOWN last
-        results.sort((a, b) ->
-                Boolean.compare(
-                        a.resultType == ResultType.UNKNOWN,
-                        b.resultType == ResultType.UNKNOWN
-                )
-        );
-
         return results;
     }
 }

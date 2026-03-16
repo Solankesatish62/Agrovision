@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * PURPOSE:
  * - Enforce strict backpressure
- * - Perform light checks
+ * - Perform light checks (non-blocking)
  * - Forward frames synchronously
  *
  * HARD CONTRACT:
@@ -23,6 +23,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class FrameAnalyzer implements ImageAnalysis.Analyzer {
 
     private final AtomicBoolean isProcessing = new AtomicBoolean(false);
+    private long lastWarningTime = 0;
+    private static final long WARNING_COOLDOWN_MS = 2000;
 
     private final LuminosityAnalyzer luminosityAnalyzer;
     private final SyncFrameConsumer frameConsumer;
@@ -47,10 +49,13 @@ public final class FrameAnalyzer implements ImageAnalysis.Analyzer {
         }
 
         try {
-            // 1️⃣ Lighting check (non-destructive)
+            // 1️⃣ Lighting check (informational only)
             if (luminosityAnalyzer.isTooDark(image)) {
-                lowLightListener.onLowLightDetected();
-                return;
+                long currentTime = System.currentTimeMillis();
+                if (currentTime - lastWarningTime > WARNING_COOLDOWN_MS) {
+                    lowLightListener.onLowLightDetected();
+                    lastWarningTime = currentTime;
+                }
             }
 
             // 2️⃣ Synchronous downstream processing ONLY
@@ -60,7 +65,8 @@ public final class FrameAnalyzer implements ImageAnalysis.Analyzer {
             LogUtils.e("FrameAnalyzer failure", e);
 
         } finally {
-            //image.close();
+            // ✅ CRITICAL FIX: Always close the image to release the buffer back to CameraX
+            image.close();
             isProcessing.set(false);
         }
     }

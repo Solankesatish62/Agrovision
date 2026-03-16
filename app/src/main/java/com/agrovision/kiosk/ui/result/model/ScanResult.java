@@ -1,6 +1,10 @@
 package com.agrovision.kiosk.ui.result.model;
 
+import android.os.Parcel;
+import android.os.Parcelable;
+
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -9,7 +13,7 @@ import java.util.List;
  * FINAL immutable output of the recognition pipeline
  * for a single medicine bottle.
  */
-public final class ScanResult implements Serializable {
+public final class ScanResult implements Parcelable {
 
     public final ResultType resultType;
 
@@ -41,39 +45,45 @@ public final class ScanResult implements Serializable {
         this.isConfidenceLow = isConfidenceLow;
     }
 
-    // ================= FACTORIES =================
-
-    public static ScanResult known(
-            String medicineId,
-            String displayName,
-            List<Integer> imageResIds,
-            List<ResultInfoItem> infoItems
-    ) {
-        return new ScanResult(
-                ResultType.KNOWN,
-                medicineId,
-                displayName,
-                imageResIds,
-                infoItems,
-                null,
-                false
-        );
+    protected ScanResult(Parcel in) {
+        resultType = (ResultType) in.readSerializable();
+        medicineId = in.readString();
+        displayName = in.readString();
+        
+        imageResIds = new ArrayList<>();
+        in.readList(imageResIds, Integer.class.getClassLoader());
+        
+        infoItems = in.createTypedArrayList(ResultInfoItem.CREATOR);
+        
+        rawOcrText = in.readString();
+        isConfidenceLow = in.readByte() != 0;
     }
 
-    public static ScanResult unknown(
-            String rawOcrText,
-            boolean isConfidenceLow
-    ) {
-        return new ScanResult(
-                ResultType.UNKNOWN,
-                null,
-                null,
-                null,
-                null,
-                rawOcrText,
-                isConfidenceLow
-        );
+    @Override
+    public void writeToParcel(Parcel dest, int flags) {
+        dest.writeSerializable(resultType);
+        dest.writeString(medicineId);
+        dest.writeString(displayName);
+        dest.writeList(imageResIds);
+        dest.writeTypedList(infoItems);
+        dest.writeString(rawOcrText);
+        dest.writeByte((byte) (isConfidenceLow ? 1 : 0));
     }
 
+    @Override
+    public int describeContents() {
+        return 0;
+    }
+
+    public static final Creator<ScanResult> CREATOR = new Creator<ScanResult>() {
+        @Override
+        public ScanResult createFromParcel(Parcel in) {
+            return new ScanResult(in);
+        }
+
+        @Override
+        public ScanResult[] newArray(int size) {
+            return new ScanResult[size];
+        }
+    };
 }
-

@@ -20,6 +20,7 @@ import com.agrovision.kiosk.util.LogUtils;
 import com.agrovision.kiosk.util.RectUtils;
 import com.agrovision.kiosk.vision.detection.*;
 import com.agrovision.kiosk.vision.recognition.OcrProcessor;
+import com.agrovision.kiosk.vision.recognition.ScanDebouncer;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.List;
@@ -29,6 +30,7 @@ import java.util.concurrent.Executor;
  * CameraController
  *
  * SINGLE OWNER of CameraX + vision pipeline.
+ * Synchronizes rotation with display for upright preview and processing.
  */
 public final class CameraController {
 
@@ -44,10 +46,11 @@ public final class CameraController {
     private ImageCapture imageCapture;
     private Preview preview;
 
-    // 🔥 Vision pipeline
+    // Vision pipeline modules
     private final YoloDetector yoloDetector;
     private final BoxStabilityTracker stabilityTracker = new BoxStabilityTracker();
     private final OcrProcessor ocrProcessor;
+    private final ScanDebouncer scanDebouncer = new ScanDebouncer();
     private ScanResultCallback scanResultCallback;
 
     private final FrameAnalyzer frameAnalyzer;
@@ -72,17 +75,10 @@ public final class CameraController {
         this.appContext = context;
         this.cameraExecutor = executor;
 
-        // ⚠️ TEMP YOLO MODEL STUB (replace later)
         this.yoloDetector = new YoloDetector(
-                new YoloModel() {
-                    @Override
-                    public List<RawDetection> runInference(Bitmap bitmap) {
-                        return List.of(); // stub
-                    }
-                }
+                new TfliteYoloModel(appContext)
         );
 
-        // 🔤 OCR (initialized ONCE)
         this.ocrProcessor = new OcrProcessor(appContext);
 
         this.frameAnalyzer = new FrameAnalyzer(
@@ -101,28 +97,24 @@ public final class CameraController {
        ========================================================= */
 
     private void handleFrame(@NonNull ImageProxy image) {
-
-        // 1️⃣ ImageProxy → Bitmap
+        // ImageUtils.toBitmap handles rotationDegrees from ImageProxy internally
         Bitmap bitmap = ImageUtils.toBitmap(image);
         if (bitmap == null) return;
 
-        // 2️⃣ YOLO detection
-        List<DetectionResult> detections =
-                yoloDetector.detect(bitmap);
+        List<DetectionResult> detections = yoloDetector.detect(bitmap);
 
-        if (detections.isEmpty()) return;
+        if (detections.isEmpty()) {
+            BitmapUtils.safeRecycle(bitmap);
+            return;
+        }
 
         for (DetectionResult detection : detections) {
-
-            boolean justStable =
-                    stabilityTracker.update(detection);
-
+            boolean justStable = stabilityTracker.update(detection);
             if (!justStable) continue;
 
             RectF stableBox = stabilityTracker.getStableBox();
-            if (stableBox == null) return;
+            if (stableBox == null) continue;
 
-            // 3️⃣ Crop stable region
             Bitmap cropped = BitmapUtils.safeCrop(
                     bitmap,
                     RectUtils.toRect(
@@ -133,67 +125,72 @@ public final class CameraController {
             );
 
             if (cropped != null) {
-
                 LogUtils.i("✅ Stable bottle detected → OCR");
-
-                // 4️⃣ OCR (ASYNC, CALLBACK-BASED — CORRECT)
                 ocrProcessor.process(cropped, normalizedText -> {
+                    BitmapUtils.safeRecycle(cropped);
 
                     if (normalizedText == null || normalizedText.isEmpty()) {
                         LogUtils.w("OCR empty");
                         return;
                     }
 
+                    if (!scanDebouncer.shouldProcess(normalizedText)) {
+                        LogUtils.d("Ignoring repeat scan for: " + normalizedText);
+                        return;
+                    }
+
+                    LogUtils.i("🚀 New scan completed: " + normalizedText);
                     if (scanResultCallback != null) {
-                        scanResultCallback.onScanCompleted(
-                                List.of(normalizedText)
-                        );
+                        scanResultCallback.onScanCompleted(List.of(normalizedText));
                     }
                 });
-
-
-                BitmapUtils.safeRecycle(cropped);
             }
 
             stabilityTracker.reset();
-            break; // ONE bottle at a time
+            break;
         }
+        
+        BitmapUtils.safeRecycle(bitmap);
     }
 
     /* =========================================================
-       CAMERA START
+       CAMERA START / STOP
        ========================================================= */
 
     public void startCamera(@NonNull LifecycleOwner owner,
                             @NonNull PreviewView previewView) {
 
-        ListenableFuture<ProcessCameraProvider> future =
-                ProcessCameraProvider.getInstance(appContext);
+        // Use post to ensure the view is attached and display information is available
+        previewView.post(() -> {
+            ListenableFuture<ProcessCameraProvider> future =
+                    ProcessCameraProvider.getInstance(appContext);
 
-        future.addListener(() -> {
-            try {
-                cameraProvider = future.get();
-                bindUseCases(owner, previewView);
-            } catch (Exception e) {
-                LogUtils.e("Camera start failed", e);
-            }
-        }, ContextCompat.getMainExecutor(appContext));
+            future.addListener(() -> {
+                try {
+                    cameraProvider = future.get();
+                    bindUseCases(owner, previewView);
+                } catch (Exception e) {
+                    LogUtils.e("Camera start failed", e);
+                }
+            }, ContextCompat.getMainExecutor(appContext));
+        });
     }
 
     private void bindUseCases(@NonNull LifecycleOwner owner,
                               @NonNull PreviewView previewView) {
 
+        if (cameraProvider == null) return;
         cameraProvider.unbindAll();
 
+        // 🛡️ Obtain rotation from display to synchronize use cases with PreviewView
         Display display = previewView.getDisplay();
-        int rotation = display != null
-                ? display.getRotation()
-                : Surface.ROTATION_0;
+        int rotation = (display != null) ? display.getRotation() : Surface.ROTATION_0;
 
         CameraSelector selector = new CameraSelector.Builder()
                 .requireLensFacing(CameraConfig.LENS_FACING)
                 .build();
 
+        // Configure ImageAnalysis with target rotation for upright frames
         imageAnalysis = new ImageAnalysis.Builder()
                 .setTargetResolution(CameraConfig.ANALYSIS_RESOLUTION)
                 .setBackpressureStrategy(CameraConfig.BACKPRESSURE_STRATEGY)
@@ -203,31 +200,34 @@ public final class CameraController {
 
         imageAnalysis.setAnalyzer(cameraExecutor, frameAnalyzer);
 
+        // Configure Preview with target rotation to match display
         preview = new Preview.Builder()
                 .setTargetRotation(rotation)
                 .build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
+        // Configure ImageCapture with target rotation
         imageCapture = new ImageCapture.Builder()
                 .setTargetRotation(rotation)
                 .setCaptureMode(CameraConfig.CAPTURE_MODE)
                 .build();
 
-        camera = cameraProvider.bindToLifecycle(
-                owner,
-                selector,
-                preview,
-                imageAnalysis,
-                imageCapture
-        );
+        try {
+            camera = cameraProvider.bindToLifecycle(
+                    owner,
+                    selector,
+                    preview,
+                    imageAnalysis,
+                    imageCapture
+            );
 
-        camera.getCameraControl()
-                .enableTorch(CameraConfig.TORCH_ENABLED_BY_DEFAULT);
+            if (camera.getCameraInfo().hasFlashUnit()) {
+                camera.getCameraControl().enableTorch(CameraConfig.TORCH_ENABLED_BY_DEFAULT);
+            }
+        } catch (Exception e) {
+            LogUtils.e("Camera bind failed", e);
+        }
     }
-
-    /* =========================================================
-       CAMERA STOP
-       ========================================================= */
 
     public void stopCamera() {
         if (cameraProvider != null) {

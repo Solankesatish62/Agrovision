@@ -43,6 +43,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Result Screen -->
+        <activity
+            android:name=".ui.result.ResultActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.Agrovision.Fullscreen" />
+
         <!-- Fallback/Container Activity -->
         <activity
             android:name=".MainActivity"

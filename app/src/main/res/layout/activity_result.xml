@@ -14,13 +14,9 @@
         android:id="@+id/standardResultLayout"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:visibility="visible"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        android:visibility="visible">
 
-
-    <LinearLayout
+        <LinearLayout
             android:id="@+id/titleContainer"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -53,6 +49,8 @@
             android:layout_height="0dp"
             android:layout_marginTop="24dp"
             android:layout_marginEnd="32dp"
+            android:layout_marginBottom="16dp"
+            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
             app:layout_constraintBottom_toTopOf="@+id/tvFooterTip"
             app:layout_constraintEnd_toStartOf="@+id/guidelineCenter"
             app:layout_constraintStart_toStartOf="parent"
@@ -63,10 +61,10 @@
             android:id="@+id/tvFooterTip"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:gravity="center"
             android:text="टीप: परिस्थितीनुसार परिणाम बदलू शकतो"
             android:textColor="#AAAAAA"
             android:textSize="12sp"
-            android:gravity="center"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toStartOf="@+id/guidelineCenter"
             app:layout_constraintStart_toStartOf="parent" />
@@ -84,12 +82,12 @@
             android:layout_height="0dp"
             app:cardCornerRadius="24dp"
             app:cardElevation="0dp"
-            app:strokeColor="#F0F0F0"
-            app:strokeWidth="1dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toEndOf="@id/guidelineCenter"
-            app:layout_constraintTop_toTopOf="parent">
+            app:layout_constraintTop_toTopOf="parent"
+            app:strokeColor="#F0F0F0"
+            app:strokeWidth="1dp">
 
             <androidx.viewpager2.widget.ViewPager2
                 android:id="@+id/imagePager"
@@ -107,31 +105,27 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:visibility="gone"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        tools:visibility="visible">
+        tools:visibility="gone">
 
-
-    <com.google.android.material.card.MaterialCardView
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="550dp"
             android:layout_height="wrap_content"
             app:cardBackgroundColor="#FEEBEB"
             app:cardCornerRadius="16dp"
             app:cardElevation="4dp"
-            app:strokeColor="#F9D7D7"
-            app:strokeWidth="1dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent">
+            app:layout_constraintTop_toTopOf="parent"
+            app:strokeColor="#F9D7D7"
+            app:strokeWidth="1dp">
 
             <TextView
                 android:id="@+id/tvUnknownHeader"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:padding="32dp"
                 android:lineSpacingExtra="8dp"
+                android:padding="32dp"
                 android:textColor="#7A2E2E"
                 android:textSize="20sp"
                 tools:text="या scan मध्ये Medicine-A हे औषधं system मध्ये उपलब्ध नाही.\nआम्ही त्यावर काम करत आहोत आणि लवकरच उपलब्ध करण्यात येईल." />
@@ -194,9 +188,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
-            android:src="@android:drawable/ic_media_pause"
             app:backgroundTint="#FFFFFF"
-            app:fabSize="normal" />
+            app:fabSize="normal"
+            app:srcCompat="@android:drawable/ic_media_pause" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

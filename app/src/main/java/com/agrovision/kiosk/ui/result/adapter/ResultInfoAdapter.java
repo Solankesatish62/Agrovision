@@ -11,6 +11,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.agrovision.kiosk.R;
 import com.agrovision.kiosk.ui.result.model.ResultInfoItem;
+import com.google.android.material.card.MaterialCardView;
 
 import java.util.Collections;
 import java.util.List;
@@ -18,19 +19,15 @@ import java.util.List;
 /**
  * ResultInfoAdapter
  *
- * PURPOSE:
- * - Render detailed medical information in a list format.
- * - Handles different visual styles based on ResultInfoItem.Type.
+ * Renders medical information cards with specific styling from Figma.
  */
-public final class ResultInfoAdapter
-        extends RecyclerView.Adapter<ResultInfoAdapter.VH> {
+public final class ResultInfoAdapter extends RecyclerView.Adapter<ResultInfoAdapter.VH> {
 
     private final List<ResultInfoItem> items;
 
     public ResultInfoAdapter(List<ResultInfoItem> items) {
         this.items = (items != null) ? items : Collections.emptyList();
     }
-
 
     @NonNull
     @Override
@@ -43,33 +40,32 @@ public final class ResultInfoAdapter
     @Override
     public void onBindViewHolder(@NonNull VH h, int position) {
         ResultInfoItem item = items.get(position);
-
         h.text.setText(item.text);
 
-        // 🎨 Apply colors and icons based on the screenshot hierarchy
+        // 🎨 Design mapping from Figma (Crops=Green, Pests=Blue, Timing=Orange, etc.)
         switch (item.type) {
             case CROP:
-                h.container.setBackgroundResource(R.drawable.bg_info_success); // GREEN
+                h.card.setCardBackgroundColor(h.itemView.getContext().getColor(R.color.bg_info_success_light));
+                h.icon.setImageResource(android.R.drawable.ic_menu_today); // Replace with Leaf icon
                 break;
-
             case PEST:
-                h.container.setBackgroundResource(R.drawable.bg_info_pest);    // BLUE
+                h.card.setCardBackgroundColor(h.itemView.getContext().getColor(R.color.bg_info_pest_light));
+                h.icon.setImageResource(android.R.drawable.ic_menu_help); // Replace with Bug icon
                 break;
-
             case USAGE:
-                h.container.setBackgroundResource(R.drawable.bg_info_success); // LIGHT GREEN
+                h.card.setCardBackgroundColor(h.itemView.getContext().getColor(R.color.bg_info_info_light));
+                h.icon.setImageResource(android.R.drawable.ic_menu_manage); // Replace with Beaker icon
                 break;
-
             case TIMING:
-                h.container.setBackgroundResource(R.drawable.bg_info_timing);  // ORANGE
+                h.card.setCardBackgroundColor(h.itemView.getContext().getColor(R.color.bg_info_timing_light));
+                h.icon.setImageResource(android.R.drawable.ic_menu_recent_history); // Replace with Clock icon
                 break;
-
-            case DOSAGE:
-                h.container.setBackgroundResource(R.drawable.bg_search);       // GREY
-                break;
-
             case CAUTION:
-                h.container.setBackgroundResource(R.drawable.bg_info_warning); // YELLOW
+                h.card.setCardBackgroundColor(h.itemView.getContext().getColor(R.color.bg_info_warning_light));
+                h.icon.setImageResource(android.R.drawable.ic_dialog_alert); // Alert icon
+                break;
+            default:
+                h.card.setCardBackgroundColor(h.itemView.getContext().getColor(R.color.white));
                 break;
         }
     }
@@ -80,14 +76,13 @@ public final class ResultInfoAdapter
     }
 
     static final class VH extends RecyclerView.ViewHolder {
-
-        final View container;
+        final MaterialCardView card;
         final ImageView icon;
         final TextView text;
 
         VH(View v) {
             super(v);
-            container = v.findViewById(R.id.container);
+            card = v.findViewById(R.id.cardContainer);
             icon = v.findViewById(R.id.icon);
             text = v.findViewById(R.id.text);
         }

@@ -19,8 +19,10 @@ import com.agrovision.kiosk.state.AppState;
 import com.agrovision.kiosk.state.StateEvent;
 import com.agrovision.kiosk.state.StateMachine;
 import com.agrovision.kiosk.state.StateObserver;
+import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
 import com.agrovision.kiosk.util.LogUtils;
+import com.google.android.material.button.MaterialButton;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import java.util.List;
@@ -45,12 +47,13 @@ public final class ResultActivity extends AppCompatActivity
             "com.agrovision.kiosk.EXTRA_SCAN_RESULTS";
 
     private static final long AUTO_ADVANCE_MS = 20_000;
+    private static final long UNKNOWN_TIMEOUT_MS = 3_000; // 🚀 Rule 1: 3 seconds timeout
     private static final long PAUSE_DURATION_MS = 120_000;
 
     // UI controls
     private ImageButton btnNext;
     private ImageButton btnPrev;
-    private ImageButton btnNewScan;
+    private MaterialButton btnNewScan;
     private FloatingActionButton btnPlay;
 
     // Renderer
@@ -64,6 +67,13 @@ public final class ResultActivity extends AppCompatActivity
     // Timer
     private final Handler timerHandler = new Handler(Looper.getMainLooper());
     private final Runnable autoAdvanceRunnable = this::advance;
+    
+    // 🚀 Rule 3: Handler for Unknown Result timeout
+    private final Runnable unknownTimeoutRunnable = () -> {
+        LogUtils.i("Unknown result timeout reached");
+        StateMachine.getInstance(getApplicationContext())
+                .transition(StateEvent.RESULT_TIMEOUT); // 🚀 Rule 2
+    };
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -107,6 +117,9 @@ public final class ResultActivity extends AppCompatActivity
     protected void onResume() {
         super.onResume();
         hideSystemUI();
+        
+        // 🚀 Rule 3: Ensure timer starts/restarts when resuming if needed
+        renderCurrent();
     }
 
     /* =========================================================
@@ -140,11 +153,8 @@ public final class ResultActivity extends AppCompatActivity
         );
     }
 
-
-    @SuppressWarnings("unchecked")
     private void loadResults() {
-        scanResults = (List<ScanResult>)
-                getIntent().getSerializableExtra(EXTRA_SCAN_RESULTS);
+        scanResults = getIntent().getParcelableArrayListExtra(EXTRA_SCAN_RESULTS);
     }
 
     /* =========================================================
@@ -155,9 +165,21 @@ public final class ResultActivity extends AppCompatActivity
         if (scanResults == null || scanResults.isEmpty()) return;
         if (currentIndex < 0 || currentIndex >= scanResults.size()) return;
 
-        renderer.render(scanResults.get(currentIndex));
-    }
+        ScanResult current = scanResults.get(currentIndex);
+        renderer.render(current);
 
+        // 🚀 Rule 3 & 6: Handle Unknown Result Timer
+        if (current.resultType == ResultType.UNKNOWN) {
+            stopTimer(); // Clear standard auto-advance
+
+            LogUtils.i("Starting 3s timeout for UNKNOWN result");
+            timerHandler.removeCallbacks(unknownTimeoutRunnable);
+            timerHandler.postDelayed(unknownTimeoutRunnable, UNKNOWN_TIMEOUT_MS);
+        } else {
+            timerHandler.removeCallbacks(unknownTimeoutRunnable);
+            startTimer(); // Use standard advance for KNOWN results
+        }
+    }
 
     /* =========================================================
        NAVIGATION + TIMERS (UX ONLY)
@@ -166,11 +188,13 @@ public final class ResultActivity extends AppCompatActivity
     private void setupControls() {
 
         btnNext.setOnClickListener(v -> {
+            cancelAllTimers(); // 🚀 Rule 4
             isPaused = false;
             advance();
         });
 
         btnPrev.setOnClickListener(v -> {
+            cancelAllTimers(); // 🚀 Rule 4
             isPaused = false;
             currentIndex =
                     (currentIndex - 1 + scanResults.size()) % scanResults.size();
@@ -179,6 +203,7 @@ public final class ResultActivity extends AppCompatActivity
         });
 
         btnPlay.setOnClickListener(v -> {
+            cancelAllTimers(); // 🚀 Rule 4
             StateMachine.getInstance(getApplicationContext())
                     .transition(
                         isPaused
@@ -188,6 +213,7 @@ public final class ResultActivity extends AppCompatActivity
         });
 
         btnNewScan.setOnClickListener(v -> {
+            cancelAllTimers(); // 🚀 Rule 4
             StateMachine.getInstance(getApplicationContext())
                     .transition(StateEvent.NEW_SCAN_REQUESTED);
         });
@@ -239,7 +265,8 @@ public final class ResultActivity extends AppCompatActivity
             case READY:
             case IDLE:
                 // Exit result screen
-                finish();
+                cancelAllTimers();
+                finish(); // 🚀 Rule 5
                 break;
 
             default:
@@ -262,6 +289,11 @@ public final class ResultActivity extends AppCompatActivity
 
     private void stopTimer() {
         timerHandler.removeCallbacks(autoAdvanceRunnable);
+    }
+    
+    private void cancelAllTimers() {
+        stopTimer();
+        timerHandler.removeCallbacks(unknownTimeoutRunnable);
     }
 
     /* =========================================================
@@ -291,6 +323,6 @@ public final class ResultActivity extends AppCompatActivity
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        stopTimer();
+        cancelAllTimers(); // 🚀 Rule 4
     }
 }
