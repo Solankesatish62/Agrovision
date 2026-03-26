@@ -48,6 +48,9 @@ public final class MedicineMapper {
         entity.supportedDiseases =
                 StringListConverter.fromList(medicine.getSupportedDiseases());
 
+        entity.imageUrls =
+                StringListConverter.fromList(medicine.getImageUrls());
+
         entity.usageInstructions = medicine.getUsageInstructions();
         entity.warnings = medicine.getWarnings();
 
@@ -68,6 +71,9 @@ public final class MedicineMapper {
         List<String> diseases =
                 StringListConverter.toList(entity.supportedDiseases);
 
+        List<String> images =
+                StringListConverter.toList(entity.imageUrls);
+
         return new Medicine(
                 entity.id,
                 entity.name,
@@ -75,7 +81,8 @@ public final class MedicineMapper {
                 crops,
                 diseases,
                 entity.usageInstructions,
-                entity.warnings
+                entity.warnings,
+                images
         );
     }
 }

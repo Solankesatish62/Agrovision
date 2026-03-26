@@ -9,7 +9,9 @@ import androidx.room.TypeConverters;
 
 import com.agrovision.kiosk.data.database.converter.StringListConverter;
 import com.agrovision.kiosk.data.database.dao.MedicineDao;
+import com.agrovision.kiosk.data.database.dao.UnknownDetectionDao;
 import com.agrovision.kiosk.data.database.entity.MedicineEntity;
+import com.agrovision.kiosk.data.database.entity.UnknownDetectionEntity;
 
 /**
  * AppDatabase
@@ -28,9 +30,10 @@ import com.agrovision.kiosk.data.database.entity.MedicineEntity;
  */
 @Database(
         entities = {
-                MedicineEntity.class
+                MedicineEntity.class,
+                UnknownDetectionEntity.class
         },
-        version = 1,
+        version = 2,
         exportSchema = false
 )
 @TypeConverters({
@@ -77,4 +80,9 @@ public abstract class AppDatabase extends RoomDatabase {
      * Provides access to Medicine DAO.
      */
     public abstract MedicineDao medicineDao();
+
+    /**
+     * Provides access to Unknown Detection DAO.
+     */
+    public abstract UnknownDetectionDao unknownDetectionDao();
 }

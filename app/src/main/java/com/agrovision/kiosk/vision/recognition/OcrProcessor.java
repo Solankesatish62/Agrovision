@@ -32,27 +32,25 @@ public final class OcrProcessor {
         );
     }
 
+    /**
+     * 🚀 Optimization 4: Public check to see if OCR is busy.
+     * Used by CameraController to skip YOLO/Stability checks when OCR is already running.
+     */
+    public boolean isBusy() {
+        return isProcessing.get();
+    }
+
     public void process(@NonNull Bitmap bitmap,
                         @NonNull Callback callback) {
 
         if (!isProcessing.getAndSet(true)) {
             try {
-                // 🔍 DIAGNOSTIC: Log bitmap size to verify if it's too small or rotated
-                LogUtils.d("OCR Input Bitmap Size: " + bitmap.getWidth() + "x" + bitmap.getHeight());
-
                 InputImage image = InputImage.fromBitmap(bitmap, 0);
 
                 recognizer.process(image)
                         .addOnSuccessListener(result -> {
                             String rawText = extractText(result);
                             
-                            // 🔍 DEBUG: See what ML Kit actually found before cleaning
-                            if (rawText.isEmpty()) {
-                                LogUtils.w("ML Kit returned NO text for this crop.");
-                            } else {
-                                LogUtils.i("ML Kit Raw OCR: [" + rawText.replace("\n", " ") + "]");
-                            }
-
                             String cleaned = TextCleaner.clean(rawText);
                             String normalized = TextNormalizer.normalize(cleaned);
 
@@ -70,8 +68,6 @@ public final class OcrProcessor {
                 mainHandler.post(() -> callback.onResult(""));
                 isProcessing.set(false);
             }
-        } else {
-             // Already processing, skip this frame
         }
     }
 

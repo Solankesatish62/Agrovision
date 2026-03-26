@@ -2,10 +2,19 @@ package com.agrovision.kiosk.app;
 
 import android.content.Context;
 
+import androidx.work.Constraints;
+import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.NetworkType;
+import androidx.work.PeriodicWorkRequest;
+import androidx.work.WorkManager;
+
 import com.agrovision.kiosk.analytics.EventTracker;
+import com.agrovision.kiosk.sync.SyncWorker;
 import com.agrovision.kiosk.threading.IoExecutor;
 import com.agrovision.kiosk.util.LogUtils;
 import com.agrovision.kiosk.watchdog.KioskExceptionHandler;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * AppInitializer performs ordered, one-time initialization
@@ -61,10 +70,34 @@ public final class AppInitializer {
         // -------------------------------------------------
         IoExecutor.submit(() -> {
             EventTracker.getInstance(appContext).initAsync();
+            scheduleBackgroundSync(appContext);
             LogUtils.i("AppInitializer: background services ready");
         });
 
         initialized = true;
         LogUtils.i("AppInitializer: infrastructure boot complete");
+    }
+
+    /**
+     * Schedules periodic background sync for unknown detections.
+     * Interval: 15 minutes (Android WorkManager minimum).
+     */
+    private static void scheduleBackgroundSync(Context context) {
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build();
+
+        PeriodicWorkRequest syncRequest = new PeriodicWorkRequest.Builder(
+                SyncWorker.class,
+                15, TimeUnit.MINUTES)
+                .setConstraints(constraints)
+                .build();
+
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                "MedicineSync",
+                ExistingPeriodicWorkPolicy.KEEP,
+                syncRequest
+        );
+        LogUtils.i("AppInitializer: Background sync scheduled");
     }
 }

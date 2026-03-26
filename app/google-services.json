@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "879191571050",
+    "project_id": "agrovision-bbafb",
+    "storage_bucket": "agrovision-bbafb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:879191571050:android:1a915153f6b24c4f2c2813",
+        "android_client_info": {
+          "package_name": "com.agrovision.kiosk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDpXo0IK_2YiVaHgC_EwB8yLuYgXOtIHGM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

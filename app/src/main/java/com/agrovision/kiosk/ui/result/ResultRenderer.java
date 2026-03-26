@@ -1,5 +1,6 @@
 package com.agrovision.kiosk.ui.result;
 
+import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
 
@@ -28,6 +29,8 @@ import java.util.List;
  * - NO timers
  */
 public final class ResultRenderer {
+
+    private static final String TAG = "ResultRenderer";
 
     // Layout containers
     private final View standardLayout;
@@ -83,7 +86,7 @@ public final class ResultRenderer {
         tvMedicineName.setText(result.displayName);
 
         // Images
-        renderImages(result.imageResIds);
+        renderImages(result.imageUrls);
 
         // Info cards
         renderInfoCards(result.infoItems);
@@ -104,15 +107,16 @@ public final class ResultRenderer {
         tvUnknownHeader.setText(message);
     }
 
-    private void renderImages(List<Integer> imageResIds) {
+    private void renderImages(List<String> imageUrls) {
+        Log.d(TAG, "Rendering images, count: " + (imageUrls != null ? imageUrls.size() : 0));
 
-        if (imageResIds == null || imageResIds.isEmpty()) {
+        if (imageUrls == null || imageUrls.isEmpty()) {
             imagePager.setAdapter(null);
             return;
         }
 
         imagePager.setAdapter(
-                new ResultImageAdapter(imageResIds)
+                new ResultImageAdapter(imageUrls)
         );
     }
 

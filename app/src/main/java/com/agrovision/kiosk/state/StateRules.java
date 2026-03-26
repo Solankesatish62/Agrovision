@@ -31,7 +31,7 @@ public final class StateRules {
         // ================= SCANNING =================
         Map<StateEvent, AppState> scanning = new EnumMap<>(StateEvent.class);
         scanning.put(StateEvent.MATCH_FOUND, AppState.RESULT_AUTO);
-        scanning.put(StateEvent.MATCH_NOT_FOUND, AppState.RESULT_UNKNOWN); // 🔒 FIXED TYPO
+        scanning.put(StateEvent.MATCH_NOT_FOUND, AppState.RESULT_UNKNOWN);
         scanning.put(StateEvent.OBJECT_REMOVED, AppState.READY);
         scanning.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
         transitionTable.put(AppState.SCANNING, scanning);
@@ -47,6 +47,7 @@ public final class StateRules {
         Map<StateEvent, AppState> resultManual = new EnumMap<>(StateEvent.class);
         resultManual.put(StateEvent.NEW_SCAN_REQUESTED, AppState.SCANNING);
         resultManual.put(StateEvent.RESULT_TIMEOUT, AppState.READY);
+        resultManual.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
         transitionTable.put(AppState.RESULT_MANUAL_NAV, resultManual);
 
         // ================= RESULT_PAUSED =================
@@ -57,12 +58,13 @@ public final class StateRules {
         transitionTable.put(AppState.RESULT_PAUSED, paused);
 
         // ================= RESULT_UNKNOWN =================
-        Map<StateEvent, AppState> unknown = new EnumMap<>(StateEvent.class); // 🔒 FIXED: Renamed section
+        Map<StateEvent, AppState> unknown = new EnumMap<>(StateEvent.class);
         unknown.put(StateEvent.MANUAL_SELECTION, AppState.RESULT_MANUAL_NAV);
         unknown.put(StateEvent.OBJECT_REMOVED, AppState.READY);
         unknown.put(StateEvent.NEW_SCAN_REQUESTED, AppState.SCANNING);
-        unknown.put(StateEvent.RESULT_TIMEOUT, AppState.READY); 
-        transitionTable.put(AppState.RESULT_UNKNOWN, unknown); // 🔒 FIXED: Used correct enum key
+        unknown.put(StateEvent.RESULT_TIMEOUT, AppState.READY);
+        unknown.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
+        transitionTable.put(AppState.RESULT_UNKNOWN, unknown);
 
         // ================= IDLE =================
         Map<StateEvent, AppState> idle = new EnumMap<>(StateEvent.class);

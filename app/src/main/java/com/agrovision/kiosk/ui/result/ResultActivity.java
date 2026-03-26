@@ -34,8 +34,7 @@ import java.util.List;
  * ResultActivity
  *
  * Responsibility: UI controller for identifying medicines.
- * Implements a 15-second auto-rotate timer with interactive manual overrides.
- * Automatically returns to HomeActivity after displaying results.
+ * Implements navigation between multiple results and auto-return functionality.
  */
 public final class ResultActivity extends AppCompatActivity
         implements StateObserver {
@@ -43,15 +42,14 @@ public final class ResultActivity extends AppCompatActivity
     public static final String EXTRA_SCAN_RESULTS =
             "com.agrovision.kiosk.EXTRA_SCAN_RESULTS";
 
-    private static final long AUTO_ROTATE_MS = 15_000; 
-    private static final long UNKNOWN_TIMEOUT_MS = 3_000; 
-    private static final long PAUSE_DURATION_MS = 120_000;
+    private static final long AUTO_ROTATE_MS = 30_000;
+    private static final long UNKNOWN_TIMEOUT_MS = 3_000;
 
     // UI controls
     private ImageButton btnNext;
     private ImageButton btnPrev;
     private MaterialButton btnNewScan;
-    private FloatingActionButton btnPlay;
+    private FloatingActionButton btnPause;
 
     // Renderer
     private ResultRenderer renderer;
@@ -61,17 +59,17 @@ public final class ResultActivity extends AppCompatActivity
     private int currentIndex = 0;
     private boolean isPaused = false;
 
-    // 🚀 Timer System
+    // Timer System
     private final Handler timerHandler = new Handler(Looper.getMainLooper());
-    
+
     private final Runnable autoRotateRunnable = () -> {
-        LogUtils.d("Timer triggered: advancing or returning to scan");
-        advance();
+        LogUtils.d("Timer triggered: automatically showing next result");
+        showNextResult();
     };
-    
+
     private final Runnable unknownTimeoutRunnable = () -> {
         LogUtils.i("Unknown result timeout: returning to scan");
-        returnToScan(); // 🚀 Explicitly navigate
+        returnToScan();
     };
 
     @Override
@@ -89,6 +87,7 @@ public final class ResultActivity extends AppCompatActivity
         loadResults();
 
         if (scanResults == null || scanResults.isEmpty()) {
+            LogUtils.i("No results available for navigation");
             returnToScan();
             return;
         }
@@ -109,7 +108,7 @@ public final class ResultActivity extends AppCompatActivity
         super.onStop();
         StateMachine.getInstance(getApplicationContext())
                 .removeObserver(this);
-        cancelAllTimers();
+        stopTimer();
     }
 
     @Override
@@ -123,7 +122,7 @@ public final class ResultActivity extends AppCompatActivity
         btnNext = findViewById(R.id.btnNext);
         btnPrev = findViewById(R.id.btnPrev);
         btnNewScan = findViewById(R.id.btnNewScan);
-        btnPlay = findViewById(R.id.btnPlay);
+        btnPause = findViewById(R.id.btnPause);
     }
 
     private void initRenderer() {
@@ -144,14 +143,9 @@ public final class ResultActivity extends AppCompatActivity
         scanResults = getIntent().getParcelableArrayListExtra(EXTRA_SCAN_RESULTS);
     }
 
-    /* =========================================================
-       NAVIGATION (Rule 3)
-       ========================================================= */
-
     private void returnToScan() {
         LogUtils.i("Executing deterministic navigation to HomeActivity");
-        
-        // Update state machine before navigating
+
         StateMachine.getInstance(getApplicationContext())
                 .transition(StateEvent.RESULT_TIMEOUT);
 
@@ -161,67 +155,80 @@ public final class ResultActivity extends AppCompatActivity
         finish();
     }
 
-    /* =========================================================
-       UI INTERACTION
-       ========================================================= */
-
     private void setupControls() {
         btnNext.setOnClickListener(v -> {
-            cancelAllTimers();
-            isPaused = false;
-            advance();
+            LogUtils.i("Next button clicked");
+            showNextResult();
         });
 
         btnPrev.setOnClickListener(v -> {
-            cancelAllTimers();
-            isPaused = false;
-            currentIndex = (currentIndex - 1 + scanResults.size()) % scanResults.size();
-            renderCurrent();
+            LogUtils.i("Previous button clicked");
+            showPreviousResult();
         });
 
-        btnPlay.setOnClickListener(v -> {
+        btnPause.setOnClickListener(v -> {
+            LogUtils.i("Pause button clicked");
             StateMachine.getInstance(getApplicationContext())
                     .transition(isPaused ? StateEvent.RESUME_REQUESTED : StateEvent.PAUSE_REQUESTED);
         });
 
         btnNewScan.setOnClickListener(v -> {
-            cancelAllTimers();
+            LogUtils.i("New scan button clicked");
+            stopTimer();
             StateMachine.getInstance(getApplicationContext())
                     .transition(StateEvent.NEW_SCAN_REQUESTED);
-            returnToScan(); 
+            returnToScan();
         });
     }
 
     private void renderCurrent() {
-        if (scanResults == null || scanResults.isEmpty()) return;
-        
+        if (scanResults == null || scanResults.isEmpty()) {
+            LogUtils.i("No results available for navigation");
+            return;
+        }
+
         ScanResult current = scanResults.get(currentIndex);
         renderer.render(current);
 
-        cancelAllTimers(); 
+        stopTimer();
 
         if (current.resultType == ResultType.UNKNOWN) {
             timerHandler.postDelayed(unknownTimeoutRunnable, UNKNOWN_TIMEOUT_MS);
         } else if (!isPaused) {
             timerHandler.postDelayed(autoRotateRunnable, AUTO_ROTATE_MS);
         }
-        
-        updatePlayButtonState();
+
+        updatePauseButtonState();
     }
 
-    private void advance() {
+    private void showNextResult() {
+        if (scanResults == null || scanResults.isEmpty()) return;
+
         if (currentIndex + 1 < scanResults.size()) {
             currentIndex++;
+            isPaused = false; // Reset pause on manual navigation
             renderCurrent();
         } else {
             LogUtils.i("All results displayed. Returning to scan.");
-            returnToScan(); // 🚀 Explicitly navigate
+            returnToScan();
         }
     }
 
-    private void updatePlayButtonState() {
-        btnPlay.setImageResource(isPaused 
-                ? android.R.drawable.ic_media_play 
+    private void showPreviousResult() {
+        if (scanResults == null || scanResults.isEmpty()) return;
+
+        if (currentIndex > 0) {
+            currentIndex--;
+            isPaused = false; // Reset pause on manual navigation
+            renderCurrent();
+        } else {
+            LogUtils.d("Already at first result");
+        }
+    }
+
+    private void updatePauseButtonState() {
+        btnPause.setImageResource(isPaused
+                ? android.R.drawable.ic_media_play
                 : android.R.drawable.ic_media_pause);
     }
 
@@ -231,29 +238,30 @@ public final class ResultActivity extends AppCompatActivity
             LogUtils.d("ResultActivity observed state: " + state);
             switch (state) {
                 case RESULT_PAUSED:
+                    LogUtils.i("Result paused");
                     isPaused = true;
-                    cancelAllTimers();
-                    updatePlayButtonState();
+                    stopTimer();
+                    updatePauseButtonState();
                     break;
 
                 case RESULT_AUTO:
                 case RESULT_MANUAL_NAV:
                     isPaused = false;
-                    renderCurrent(); 
+                    renderCurrent();
                     break;
 
                 case READY:
                 case IDLE:
-                    cancelAllTimers();
+                    stopTimer();
                     if (!isFinishing()) {
-                        finish(); 
+                        finish();
                     }
                     break;
             }
         });
     }
 
-    private void cancelAllTimers() {
+    private void stopTimer() {
         timerHandler.removeCallbacks(autoRotateRunnable);
         timerHandler.removeCallbacks(unknownTimeoutRunnable);
     }
@@ -278,6 +286,6 @@ public final class ResultActivity extends AppCompatActivity
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        cancelAllTimers();
+        stopTimer();
     }
 }

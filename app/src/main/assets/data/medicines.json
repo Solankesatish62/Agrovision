@@ -13,7 +13,11 @@
       "जास्त डोस दिल्याने फायदा वाढत नाही, उलट पिकावर ताण येऊ शकतो."
     ],
     "usageInstructions": "खूप जुनी किंवा जास्त वाढलेली किड असल्यास परिणाम कमी होऊ शकतो.",
-    "warnings": ""
+    "warnings": "",
+    "imageUrls": [
+      "file:///android_asset/images/ulala_1.jpg",
+      "file:///android_asset/images/ulala_2.jpg"
+    ]
   },
   {
     "id": "iffco_nano_dap",
@@ -28,7 +32,10 @@
     ],
     "supportedDiseases": [],
     "usageInstructions": "प्रति एकर २५०–५०० मि.ली. पाण्यात मिसळून फवारणी.",
-    "warnings": "जास्त प्रमाणात वापर टाळा."
+    "warnings": "जास्त प्रमाणात वापर टाळा.",
+    "imageUrls": [
+      "file:///android_asset/images/nano_dap_1.jpg"
+    ]
   },
   {
     "id": "cobalt_sulphate",
@@ -44,6 +51,9 @@
       "शिफारस केलेल्या प्रमाणातच वापर करावा."
     ],
     "usageInstructions": "जास्त प्रमाणात वापर केल्यास पिकावर ताण येऊ शकतो.",
-    "warnings": ""
+    "warnings": "",
+    "imageUrls": [
+      "file:///android_asset/images/cobalt_1.jpg"
+    ]
   }
 ]

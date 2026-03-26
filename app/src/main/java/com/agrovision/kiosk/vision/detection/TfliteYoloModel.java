@@ -8,6 +8,7 @@ import android.graphics.RectF;
 import androidx.annotation.NonNull;
 
 import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.nnapi.NnApiDelegate;
 
 import java.io.FileInputStream;
 import java.nio.ByteBuffer;
@@ -24,6 +25,7 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
     private static final String DEFAULT_MODEL_PATH = "models/best_float32.tflite";
 
     private final Interpreter interpreter;
+    private NnApiDelegate nnApiDelegate = null;
 
     private final int inputWidth;
     private final int inputHeight;
@@ -31,7 +33,7 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
     private final int numBoxes;
     private final int valuesPerBox;
 
-    private final boolean isTransposedOutput; // 🔒 FIX #2
+    private final boolean isTransposedOutput;
 
     private final ByteBuffer inputBuffer;
     private final float[][][] outputBuffer;
@@ -48,7 +50,15 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
 
             Interpreter.Options options = new Interpreter.Options();
             options.setNumThreads(4);
-            options.setUseNNAPI(true);
+
+            // 🚀 STEP 3: ENABLE HARDWARE ACCELERATION
+            try {
+                nnApiDelegate = new NnApiDelegate();
+                options.addDelegate(nnApiDelegate);
+            } catch (Exception e) {
+                // Fallback to CPU if NNAPI fails
+                options.setUseNNAPI(true);
+            }
 
             interpreter = new Interpreter(model, options);
 
@@ -56,6 +66,7 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
             inputHeight = inputShape[1];
             inputWidth = inputShape[2];
 
+            // 🚀 STEP 5: PRE-ALLOCATE BUFFERS (AVOID RE-ALLOCATION)
             inputBuffer = ByteBuffer.allocateDirect(4 * inputWidth * inputHeight * 3)
                     .order(ByteOrder.nativeOrder());
 
@@ -63,14 +74,11 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
 
             int[] outputShape = interpreter.getOutputTensor(0).shape();
 
-            // 🔒 FIX #2 — detect layout
             if (outputShape[1] > outputShape[2]) {
-                // [1, boxes, values]
                 numBoxes = outputShape[1];
                 valuesPerBox = outputShape[2];
                 isTransposedOutput = false;
             } else {
-                // [1, values, boxes] → YOLOv8/v11
                 valuesPerBox = outputShape[1];
                 numBoxes = outputShape[2];
                 isTransposedOutput = true;
@@ -89,12 +97,13 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
         if (bitmap == null) return Collections.emptyList();
 
         try {
+            // 🚀 STEP 1: RESIZE TO MODEL INPUT SIZE
             preprocess(bitmap);
+            
             interpreter.run(inputBuffer, outputBuffer);
 
             List<RawDetection> raw = parseOutput(bitmap.getWidth(), bitmap.getHeight());
 
-            // 🔒 FIX #1 — apply NMS
             return applyNms(raw, 0.45f);
 
         } catch (Exception e) {
@@ -105,10 +114,9 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
     /* ================= PREPROCESS ================= */
 
     private void preprocess(Bitmap bitmap) {
-
+        // 🚀 STEP 1: REDUCE INPUT IMAGE SIZE (Bitmap.createScaledBitmap)
         Bitmap resized = Bitmap.createScaledBitmap(bitmap, inputWidth, inputHeight, true);
-        boolean recycle = resized != bitmap;
-
+        
         resized.getPixels(pixelBuffer, 0, inputWidth, 0, 0, inputWidth, inputHeight);
 
         inputBuffer.rewind();
@@ -118,7 +126,10 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
             inputBuffer.putFloat((p & 0xFF) / 255f);
         }
 
-        if (recycle) resized.recycle();
+        // Clean up temporary resized bitmap
+        if (resized != bitmap) {
+            resized.recycle();
+        }
     }
 
     /* ================= OUTPUT PARSING ================= */
@@ -140,7 +151,6 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
             float w  = get(0, i, 2);
             float h  = get(0, i, 3);
 
-            // 🛡️ SMART SCALING: Detect if coordinates are normalized (0-1) or pixel-based
             float xMultiplier = (cx <= 1.1f && w <= 1.1f) ? srcW : (float) srcW / inputWidth;
             float yMultiplier = (cy <= 1.1f && h <= 1.1f) ? srcH : (float) srcH / inputHeight;
 
@@ -199,7 +209,12 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
 
     @Override
     public void close() {
-        interpreter.close(); // 🔒 FIX #3
+        if (interpreter != null) {
+            interpreter.close();
+        }
+        if (nnApiDelegate != null) {
+            nnApiDelegate.close();
+        }
     }
 
     private static MappedByteBuffer loadModel(Context context, String path) throws Exception {

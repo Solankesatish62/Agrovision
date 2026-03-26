@@ -3,7 +3,6 @@ package com.agrovision.kiosk.ui.result.model;
 import android.os.Parcel;
 import android.os.Parcelable;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,7 +19,7 @@ public final class ScanResult implements Parcelable {
     // KNOWN only
     public final String medicineId;
     public final String displayName;
-    public final List<Integer> imageResIds;
+    public final List<String> imageUrls;
     public final List<ResultInfoItem> infoItems;
 
     // UNKNOWN / diagnostics
@@ -31,7 +30,7 @@ public final class ScanResult implements Parcelable {
             ResultType resultType,
             String medicineId,
             String displayName,
-            List<Integer> imageResIds,
+            List<String> imageUrls,
             List<ResultInfoItem> infoItems,
             String rawOcrText,
             boolean isConfidenceLow
@@ -39,7 +38,7 @@ public final class ScanResult implements Parcelable {
         this.resultType = resultType;
         this.medicineId = medicineId;
         this.displayName = displayName;
-        this.imageResIds = imageResIds;
+        this.imageUrls = imageUrls != null ? imageUrls : new ArrayList<>();
         this.infoItems = infoItems;
         this.rawOcrText = rawOcrText;
         this.isConfidenceLow = isConfidenceLow;
@@ -50,8 +49,8 @@ public final class ScanResult implements Parcelable {
         medicineId = in.readString();
         displayName = in.readString();
         
-        imageResIds = new ArrayList<>();
-        in.readList(imageResIds, Integer.class.getClassLoader());
+        imageUrls = new ArrayList<>();
+        in.readStringList(imageUrls);
         
         infoItems = in.createTypedArrayList(ResultInfoItem.CREATOR);
         
@@ -64,7 +63,7 @@ public final class ScanResult implements Parcelable {
         dest.writeSerializable(resultType);
         dest.writeString(medicineId);
         dest.writeString(displayName);
-        dest.writeList(imageResIds);
+        dest.writeStringList(imageUrls);
         dest.writeTypedList(infoItems);
         dest.writeString(rawOcrText);
         dest.writeByte((byte) (isConfidenceLow ? 1 : 0));

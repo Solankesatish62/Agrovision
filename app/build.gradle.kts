@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.google.services)
 }
 
 android {
@@ -47,9 +48,20 @@ dependencies {
     implementation(libs.camera.lifecycle)
     implementation(libs.camera.view)
     
+    // Guava (required by CameraX ListenableFuture)
+    implementation(libs.guava)
+
     // Room components
     implementation(libs.room.runtime)
     annotationProcessor(libs.room.compiler)
+    
+    // Firebase
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.firestore)
+    implementation(libs.firebase.storage)
+
+    // Background Sync
+    implementation(libs.work.runtime)
     
     // ML Kit Text Recognition
     implementation("com.google.mlkit:text-recognition:16.0.0")

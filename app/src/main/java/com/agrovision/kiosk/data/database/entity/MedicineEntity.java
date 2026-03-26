@@ -66,4 +66,11 @@ public class MedicineEntity {
      * Warnings / safety notes.
      */
     public String warnings;
+
+    /**
+     * Image URLs.
+     *
+     * Stored as CSV string via StringListConverter.
+     */
+    public String imageUrls;
 }

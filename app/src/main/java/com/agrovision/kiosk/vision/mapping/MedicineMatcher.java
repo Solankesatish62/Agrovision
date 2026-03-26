@@ -13,10 +13,11 @@ import java.util.Set;
  * MedicineMatcher
  *
  * Responsibility: Order-independent token-based matching for medicine identification.
+ * Optimized for mixed-language names (English + Marathi).
  */
 public final class MedicineMatcher {
 
-    private static final float MATCH_THRESHOLD = 0.45f; // Threshold to handle partial matches (e.g. English only)
+    private static final float MATCH_THRESHOLD = 0.40f; 
 
     private MedicineMatcher() {
         // No instances
@@ -67,31 +68,37 @@ public final class MedicineMatcher {
                 }
             }
 
-            float score = (float) matchCount / medicineTokens.size();
+            if (matchCount == 0) continue;
+
+            // 🚀 BALANCED SCORING LOGIC
+            // catalogCoverage: How much of the long catalog name we found.
+            // ocrCoverage: How much of what the camera saw was actually a match.
+            float catalogCoverage = (float) matchCount / medicineTokens.size();
+            float ocrCoverage = (float) matchCount / ocrTokens.size();
+            
+            // Final score is a weighted average. 
+            // We give more weight to ocrCoverage because if the camera only sees "Profex", 
+            // and "Profex" is in the catalog, it's a very strong signal.
+            float score = (ocrCoverage * 0.7f) + (catalogCoverage * 0.3f);
             
             // 🔍 DIAGNOSTIC LOG
             LogUtils.d(String.format(Locale.US,
-                "CHECKING: %s | TOKENS: %s | MATCHED: %s | SCORE: %.2f", 
-                medicineName, medicineTokens, matchedTokensList, score));
+                "CHECKING: %s | MATCHED: %s | OCR_COV: %.2f | CAT_COV: %.2f | FINAL_SCORE: %.2f", 
+                medicineName, matchedTokensList, ocrCoverage, catalogCoverage, score));
 
             if (score >= MATCH_THRESHOLD && score > bestScore) {
                 bestScore = score;
                 bestMedicine = medicine;
-            } else if (score == bestScore && bestScore >= MATCH_THRESHOLD && bestMedicine != null) {
-                if (medicineTokens.size() > tokenize(bestMedicine.getName()).size()) {
-                    bestMedicine = medicine;
-                }
             }
         }
 
         // 3. Final Result
         if (bestMedicine != null) {
             LogUtils.i(String.format(Locale.US, 
-                "MATCH_SUCCESS: %s (Score: %.2f, OCR: %s)", 
-                bestMedicine.getName(), bestScore, ocrTokenSet));
+                "MATCH_SUCCESS: %s (Score: %.2f)", 
+                bestMedicine.getName(), bestScore));
                 
-            // Return exact if score is very high, otherwise fuzzy
-            return bestScore >= 0.9f 
+            return bestScore >= 0.85f 
                 ? MatchResult.exact(bestMedicine, normalizedText) 
                 : MatchResult.fuzzy(bestMedicine, bestScore, normalizedText);
         }
@@ -100,19 +107,9 @@ public final class MedicineMatcher {
         return MatchResult.none(normalizedText);
     }
 
-    /**
-     * Normalizes and tokenizes text.
-     * 
-     * IMPORTANT: 
-     * - Uses \p{L} for letters
-     * - Uses \p{N} for numbers
-     * - Uses \p{M} for combining marks (CRITICAL for Marathi/Devanagari vowel signs)
-     */
     private static List<String> tokenize(String text) {
         if (text == null) return new ArrayList<>();
         
-        // Lowercase and replace non-content symbols with spaces.
-        // We added \p{M} to preserve Devanagari vowel signs (Matras).
         String cleaned = text.toLowerCase(Locale.ROOT)
                 .replaceAll("[^\\p{L}\\p{N}\\p{M}\\s]", " ");
 

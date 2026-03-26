@@ -57,6 +57,10 @@ public final class Medicine {
     // Example: dosage limits, environmental precautions.
     private final String warnings;
 
+    // List of image URLs for this medicine.
+    // IMMUTABLE defensive copy stored internally.
+    private final List<String> imageUrls;
+
     /**
      * Constructor.
      *
@@ -73,7 +77,8 @@ public final class Medicine {
             List<String> supportedCrops,
             List<String> supportedDiseases,
             String usageInstructions,
-            String warnings
+            String warnings,
+            List<String> imageUrls
     ) {
         // Assign immutable scalar fields directly.
         this.id = id;
@@ -106,6 +111,15 @@ public final class Medicine {
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(
                 new ArrayList<>(supportedDiseases)
+        );
+
+        /*
+         * Defensive copy for imageUrls.
+         */
+        this.imageUrls = imageUrls == null
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(
+                new ArrayList<>(imageUrls)
         );
 
         // Assign textual fields.
@@ -161,6 +175,13 @@ public final class Medicine {
     // Returns warnings or safety notes.
     public String getWarnings() {
         return warnings;
+    }
+
+    /**
+     * Returns the list of image URLs.
+     */
+    public List<String> getImageUrls() {
+        return imageUrls;
     }
 
     /* =========================================================

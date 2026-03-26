@@ -52,7 +52,7 @@ public final class HomeActivity extends AppCompatActivity
 
         bindViews();
         initDependencies();
-        startCamera(); // 🚀 Directly starting camera as requested
+        startCamera(); 
         setupManualSearch();
     }
 
@@ -87,12 +87,8 @@ public final class HomeActivity extends AppCompatActivity
         cameraController = CameraController.getInstance(getApplicationContext());
         cameraController.setScanResultCallback(this);
 
-        // 1. Fetch medicine catalog once from Repository
-        MedicineRepository repository = MedicineRepository.getInstance(getApplicationContext());
-        List<Medicine> catalog = repository.getAll();
-        
-        // 2. Initialize Orchestrator with the pre-loaded catalog
-        pipeline = new RecognitionPipelineOrchestrator(catalog);
+        // Initialize Orchestrator (it handles catalog sync internally now)
+        pipeline = new RecognitionPipelineOrchestrator(getApplicationContext());
     }
 
     private void startCamera() {
@@ -117,7 +113,7 @@ public final class HomeActivity extends AppCompatActivity
     @Override
     public void onScanCompleted(List<String> normalizedTexts) {
         runOnUiThread(() -> {
-            // 3. Resolve OCR text to ScanResults using Orchestrator
+            // Resolve OCR text to ScanResults using Orchestrator
             List<ScanResult> results = pipeline.resolve(normalizedTexts);
 
             if (results == null || results.isEmpty()) {
@@ -125,7 +121,7 @@ public final class HomeActivity extends AppCompatActivity
                 return;
             }
 
-            // 4. Launch ResultActivity with the processed results
+            // Launch ResultActivity with the processed results
             launchResultScreen(results);
         });
     }

@@ -17,9 +17,10 @@ import androidx.annotation.Nullable;
  */
 public final class BoxStabilityTracker {
 
-    /* ---------------- CONFIG (SANE DEFAULTS) ---------------- */
+    /* ---------------- CONFIG (OPTIMIZED) ---------------- */
 
-    private static final long REQUIRED_STABLE_DURATION_MS = 500;
+    // 🚀 Optimization 1: Reduced stability duration for faster response (Rule 1)
+    private static final long REQUIRED_STABLE_DURATION_MS = 400;
     private static final float MIN_IOU_THRESHOLD = 0.6f;
     private static final float MIN_CONFIDENCE = 0.5f;
 

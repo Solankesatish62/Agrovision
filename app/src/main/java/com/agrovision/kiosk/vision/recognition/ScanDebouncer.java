@@ -12,7 +12,8 @@ import java.util.Objects;
  */
 public final class ScanDebouncer {
 
-    private static final long DEFAULT_COOLDOWN_MS = 5000; // 5 seconds
+    // 🚀 Optimization 5: Reduced cooldown for faster re-scans
+    private static final long DEFAULT_COOLDOWN_MS = 500;
 
     private String lastText;
     private long lastTimestamp;

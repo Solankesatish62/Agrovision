@@ -31,6 +31,7 @@ import java.util.concurrent.Executor;
  *
  * SINGLE OWNER of CameraX + vision pipeline.
  * Synchronizes rotation with display for upright preview and processing.
+ * Optimized for 1-2 second end-to-end latency.
  */
 public final class CameraController {
 
@@ -97,11 +98,20 @@ public final class CameraController {
        ========================================================= */
 
     private void handleFrame(@NonNull ImageProxy image) {
-        // ImageUtils.toBitmap handles rotationDegrees from ImageProxy internally
+        // 🚀 Optimization 4: Skip YOLO/Stability if OCR is already busy
+        if (ocrProcessor.isBusy()) {
+            return;
+        }
+
+        long pipelineStart = System.currentTimeMillis();
+
         Bitmap bitmap = ImageUtils.toBitmap(image);
         if (bitmap == null) return;
 
+        // ⏱️ Log: Detection Time
+        long detStart = System.currentTimeMillis();
         List<DetectionResult> detections = yoloDetector.detect(bitmap);
+        long detEnd = System.currentTimeMillis();
 
         if (detections.isEmpty()) {
             BitmapUtils.safeRecycle(bitmap);
@@ -109,12 +119,18 @@ public final class CameraController {
         }
 
         for (DetectionResult detection : detections) {
+            // ⏱️ Log: Stability Check
+            long stabStart = System.currentTimeMillis();
             boolean justStable = stabilityTracker.update(detection);
+            long stabEnd = System.currentTimeMillis();
+
             if (!justStable) continue;
 
             RectF stableBox = stabilityTracker.getStableBox();
             if (stableBox == null) continue;
 
+            // 🚀 Optimization 3: Crop Label Region (Slightly smaller than full bottle box for better OCR)
+            // We use the full box here as it's the most reliable for current YOLO model
             Bitmap cropped = BitmapUtils.safeCrop(
                     bitmap,
                     RectUtils.toRect(
@@ -125,24 +141,39 @@ public final class CameraController {
             );
 
             if (cropped != null) {
-                LogUtils.i("✅ Stable bottle detected → OCR");
-                ocrProcessor.process(cropped, normalizedText -> {
+                // 🚀 Optimization 2: Resize OCR Input (Max width 640px)
+                Bitmap ocrInput = BitmapUtils.scaleToWidth(cropped, 640);
+                if (ocrInput != cropped) {
                     BitmapUtils.safeRecycle(cropped);
+                }
+
+                LogUtils.i(String.format("✅ Stable bottle [Det: %dms, Stab: %dms] → OCR", 
+                        (detEnd - detStart), (stabEnd - stabStart)));
+
+                long ocrStart = System.currentTimeMillis();
+                ocrProcessor.process(ocrInput, normalizedText -> {
+                    long ocrEnd = System.currentTimeMillis();
+                    BitmapUtils.safeRecycle(ocrInput);
 
                     if (normalizedText == null || normalizedText.isEmpty()) {
-                        LogUtils.w("OCR empty");
                         return;
                     }
 
                     if (!scanDebouncer.shouldProcess(normalizedText)) {
-                        LogUtils.d("Ignoring repeat scan for: " + normalizedText);
                         return;
                     }
 
-                    LogUtils.i("🚀 New scan completed: " + normalizedText);
+                    long matchStart = System.currentTimeMillis();
                     if (scanResultCallback != null) {
                         scanResultCallback.onScanCompleted(List.of(normalizedText));
                     }
+                    long matchEnd = System.currentTimeMillis();
+
+                    // ⏱️ Total Pipeline Metrics (Rule 7)
+                    LogUtils.i(String.format("🚀 Latency: Total=%dms [OCR=%dms, Match=%dms]", 
+                            (System.currentTimeMillis() - pipelineStart),
+                            (ocrEnd - ocrStart),
+                            (matchEnd - matchStart)));
                 });
             }
 
@@ -160,7 +191,6 @@ public final class CameraController {
     public void startCamera(@NonNull LifecycleOwner owner,
                             @NonNull PreviewView previewView) {
 
-        // Use post to ensure the view is attached and display information is available
         previewView.post(() -> {
             ListenableFuture<ProcessCameraProvider> future =
                     ProcessCameraProvider.getInstance(appContext);
@@ -182,7 +212,6 @@ public final class CameraController {
         if (cameraProvider == null) return;
         cameraProvider.unbindAll();
 
-        // 🛡️ Obtain rotation from display to synchronize use cases with PreviewView
         Display display = previewView.getDisplay();
         int rotation = (display != null) ? display.getRotation() : Surface.ROTATION_0;
 
@@ -190,7 +219,6 @@ public final class CameraController {
                 .requireLensFacing(CameraConfig.LENS_FACING)
                 .build();
 
-        // Configure ImageAnalysis with target rotation for upright frames
         imageAnalysis = new ImageAnalysis.Builder()
                 .setTargetResolution(CameraConfig.ANALYSIS_RESOLUTION)
                 .setBackpressureStrategy(CameraConfig.BACKPRESSURE_STRATEGY)
@@ -200,13 +228,11 @@ public final class CameraController {
 
         imageAnalysis.setAnalyzer(cameraExecutor, frameAnalyzer);
 
-        // Configure Preview with target rotation to match display
         preview = new Preview.Builder()
                 .setTargetRotation(rotation)
                 .build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-        // Configure ImageCapture with target rotation
         imageCapture = new ImageCapture.Builder()
                 .setTargetRotation(rotation)
                 .setCaptureMode(CameraConfig.CAPTURE_MODE)
