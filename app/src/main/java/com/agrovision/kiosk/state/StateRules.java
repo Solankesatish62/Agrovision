@@ -5,11 +5,6 @@ import java.util.Map;
 
 /**
  * StateRules defines all LEGAL state transitions.
- *
- * It is a pure decision table:
- * (CurrentState + Event) -> NextState
- *
- * Illegal transitions are safely ignored.
  */
 public final class StateRules {
 
@@ -34,6 +29,7 @@ public final class StateRules {
         scanning.put(StateEvent.MATCH_NOT_FOUND, AppState.RESULT_UNKNOWN);
         scanning.put(StateEvent.OBJECT_REMOVED, AppState.READY);
         scanning.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
+        scanning.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE); // 🚀 Allow idle from scanning
         transitionTable.put(AppState.SCANNING, scanning);
 
         // ================= RESULT_AUTO =================
@@ -41,6 +37,7 @@ public final class StateRules {
         resultAuto.put(StateEvent.RESULT_TIMEOUT, AppState.READY);
         resultAuto.put(StateEvent.NEW_SCAN_REQUESTED, AppState.SCANNING);
         resultAuto.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
+        resultAuto.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE);
         transitionTable.put(AppState.RESULT_AUTO, resultAuto);
 
         // ================= RESULT_MANUAL_NAV =================
@@ -48,6 +45,7 @@ public final class StateRules {
         resultManual.put(StateEvent.NEW_SCAN_REQUESTED, AppState.SCANNING);
         resultManual.put(StateEvent.RESULT_TIMEOUT, AppState.READY);
         resultManual.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
+        resultManual.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE);
         transitionTable.put(AppState.RESULT_MANUAL_NAV, resultManual);
 
         // ================= RESULT_PAUSED =================
@@ -55,6 +53,7 @@ public final class StateRules {
         paused.put(StateEvent.RESUME_REQUESTED, AppState.RESULT_AUTO);
         paused.put(StateEvent.NEW_SCAN_REQUESTED, AppState.SCANNING);
         paused.put(StateEvent.OBJECT_REMOVED, AppState.READY);
+        paused.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE);
         transitionTable.put(AppState.RESULT_PAUSED, paused);
 
         // ================= RESULT_UNKNOWN =================
@@ -64,29 +63,20 @@ public final class StateRules {
         unknown.put(StateEvent.NEW_SCAN_REQUESTED, AppState.SCANNING);
         unknown.put(StateEvent.RESULT_TIMEOUT, AppState.READY);
         unknown.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
+        unknown.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE);
         transitionTable.put(AppState.RESULT_UNKNOWN, unknown);
 
         // ================= IDLE =================
         Map<StateEvent, AppState> idle = new EnumMap<>(StateEvent.class);
         idle.put(StateEvent.ACTIVITY_DETECTED, AppState.READY);
+        idle.put(StateEvent.OBJECT_DETECTED, AppState.SCANNING);
         transitionTable.put(AppState.IDLE, idle);
     }
 
-    /**
-     * Returns the next state for the given state + event.
-     * Illegal transitions are ignored safely.
-     */
     public AppState calculateNextState(AppState currentState, StateEvent event) {
-
-        if (currentState == null || event == null) {
-            return currentState;
-        }
-
+        if (currentState == null || event == null) return currentState;
         Map<StateEvent, AppState> allowed = transitionTable.get(currentState);
-        if (allowed == null) {
-            return currentState;
-        }
-
+        if (allowed == null) return currentState;
         AppState next = allowed.get(event);
         return next != null ? next : currentState;
     }

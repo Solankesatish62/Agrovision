@@ -3,6 +3,7 @@ package com.agrovision.kiosk.camera;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.RectF;
+import android.util.Log;
 import android.view.Display;
 import android.view.Surface;
 
@@ -13,6 +14,8 @@ import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
 import androidx.lifecycle.LifecycleOwner;
 
+import com.agrovision.kiosk.state.StateEvent;
+import com.agrovision.kiosk.state.StateMachine;
 import com.agrovision.kiosk.threading.DetectionExecutor;
 import com.agrovision.kiosk.util.BitmapUtils;
 import com.agrovision.kiosk.util.ImageUtils;
@@ -23,6 +26,7 @@ import com.agrovision.kiosk.vision.recognition.OcrProcessor;
 import com.agrovision.kiosk.vision.recognition.ScanDebouncer;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Executor;
 
@@ -39,6 +43,7 @@ public final class CameraController {
 
     private final Context appContext;
     private final Executor cameraExecutor;
+    private final StateMachine stateMachine;
 
     private ProcessCameraProvider cameraProvider;
     private Camera camera;
@@ -75,6 +80,7 @@ public final class CameraController {
 
         this.appContext = context;
         this.cameraExecutor = executor;
+        this.stateMachine = StateMachine.getInstance(appContext);
 
         this.yoloDetector = new YoloDetector(
                 new TfliteYoloModel(appContext)
@@ -126,11 +132,16 @@ public final class CameraController {
 
             if (!justStable) continue;
 
+            // 🚀 WAKE UP IMMEDIATELY: Tell the system an object is detected
+            // This will cause AdActivity to finish and HomeActivity to wake up
+            Log.e("STATE_DEBUG", "STABLE BOTTLE DETECTED - FORCING WAKEUP");
+            stateMachine.transition(StateEvent.OBJECT_DETECTED);
+            stateMachine.transition(StateEvent.ACTIVITY_DETECTED); // Double tap transition for safety
+
             RectF stableBox = stabilityTracker.getStableBox();
             if (stableBox == null) continue;
 
-            // 🚀 Optimization 3: Crop Label Region (Slightly smaller than full bottle box for better OCR)
-            // We use the full box here as it's the most reliable for current YOLO model
+            // 🚀 Optimization 3: Crop Label Region
             Bitmap cropped = BitmapUtils.safeCrop(
                     bitmap,
                     RectUtils.toRect(
@@ -164,8 +175,9 @@ public final class CameraController {
                     }
 
                     long matchStart = System.currentTimeMillis();
+                    Log.e("STATE_DEBUG", "OCR completed: " + normalizedText);
                     if (scanResultCallback != null) {
-                        scanResultCallback.onScanCompleted(List.of(normalizedText));
+                        scanResultCallback.onScanCompleted(Collections.singletonList(normalizedText));
                     }
                     long matchEnd = System.currentTimeMillis();
 
@@ -204,6 +216,43 @@ public final class CameraController {
                 }
             }, ContextCompat.getMainExecutor(appContext));
         });
+    }
+
+    /**
+     * 🚀 SILENT MODE: Starts detection without any UI preview.
+     */
+    public void startSilentAnalysis(@NonNull LifecycleOwner owner) {
+        ListenableFuture<ProcessCameraProvider> future =
+                ProcessCameraProvider.getInstance(appContext);
+
+        future.addListener(() -> {
+            try {
+                cameraProvider = future.get();
+                if (cameraProvider == null) return;
+                
+                cameraProvider.unbindAll();
+
+                CameraSelector selector = new CameraSelector.Builder()
+                        .requireLensFacing(CameraConfig.LENS_FACING)
+                        .build();
+
+                imageAnalysis = new ImageAnalysis.Builder()
+                        .setTargetResolution(CameraConfig.ANALYSIS_RESOLUTION)
+                        .setBackpressureStrategy(CameraConfig.BACKPRESSURE_STRATEGY)
+                        .setOutputImageFormat(CameraConfig.IMAGE_FORMAT)
+                        .build();
+
+                imageAnalysis.setAnalyzer(cameraExecutor, frameAnalyzer);
+
+                camera = cameraProvider.bindToLifecycle(
+                        owner,
+                        selector,
+                        imageAnalysis
+                );
+            } catch (Exception e) {
+                LogUtils.e("Silent analysis start failed", e);
+            }
+        }, ContextCompat.getMainExecutor(appContext));
     }
 
     private void bindUseCases(@NonNull LifecycleOwner owner,

@@ -3,6 +3,7 @@ package com.agrovision.kiosk.state;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import com.agrovision.kiosk.analytics.EventTracker;
 
@@ -47,12 +48,15 @@ public final class StateMachine {
      * Main entry point for all state transitions.
      */
     public synchronized void transition(StateEvent event) {
+        Log.d("STATE_DEBUG", "Transition request: " + currentState + " + " + event);
 
         AppState next = rules.calculateNextState(currentState, event);
         if (next == currentState) {
+            Log.d("STATE_DEBUG", "No transition: " + currentState + " (event " + event + " ignored or leads to same state)");
             return;
         }
 
+        Log.i("STATE_DEBUG", "STATE_TRANSITION: " + currentState + " -> " + next + " [via " + event + "]");
         eventTracker.logStateTransition(currentState, next, event);
 
         currentState = next;
@@ -62,10 +66,12 @@ public final class StateMachine {
 
     public synchronized void addObserver(StateObserver observer) {
         observers.add(observer);
+        Log.d("STATE_DEBUG", "Observer added: " + observer.getClass().getSimpleName() + ". Total: " + observers.size());
     }
 
     public synchronized void removeObserver(StateObserver observer) {
         observers.remove(observer);
+        Log.d("STATE_DEBUG", "Observer removed: " + observer.getClass().getSimpleName() + ". Total: " + observers.size());
     }
 
     private void notifyObservers(AppState state) {

@@ -51,6 +51,10 @@ dependencies {
     // Guava (required by CameraX ListenableFuture)
     implementation(libs.guava)
 
+    // Glide (Image Loading for Ads)
+    implementation(libs.glide)
+    annotationProcessor(libs.glide.compiler)
+
     // Room components
     implementation(libs.room.runtime)
     annotationProcessor(libs.room.compiler)
