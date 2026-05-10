@@ -19,10 +19,10 @@ public final class BoxStabilityTracker {
 
     /* ---------------- CONFIG (OPTIMIZED) ---------------- */
 
-    // 🚀 Optimization 1: Reduced stability duration for faster response (Rule 1)
-    private static final long REQUIRED_STABLE_DURATION_MS = 400;
-    private static final float MIN_IOU_THRESHOLD = 0.6f;
-    private static final float MIN_CONFIDENCE = 0.5f;
+    // 🚀 Optimization 1: Set to near-instant for faster kiosk response
+    private static final long REQUIRED_STABLE_DURATION_MS = 100;
+    private static final float MIN_IOU_THRESHOLD = 0.5f;
+    private static final float MIN_CONFIDENCE = 0.3f;
 
     /* ---------------- INTERNAL STATE ---------------- */
 

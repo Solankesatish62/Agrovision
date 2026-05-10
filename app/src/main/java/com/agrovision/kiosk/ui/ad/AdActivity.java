@@ -23,13 +23,22 @@ import com.agrovision.kiosk.state.StateObserver;
 import com.agrovision.kiosk.util.LogUtils;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
-import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.DocumentReference;
+import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.SetOptions;
+import com.google.firebase.firestore.DocumentSnapshot;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * AdActivity
@@ -45,6 +54,12 @@ public final class AdActivity extends AppCompatActivity implements ScanResultCal
     private final List<String> adUrls = new ArrayList<>();
     private int currentAdIndex = 0;
     private long rotationIntervalMs = 10000;
+    private boolean isVisible = false;
+
+    // 🚀 Ad Impression Tracking
+    private final Map<String, Long> localAdCounts = new HashMap<>();
+    private int pendingTotalImpressions = 0;
+    private static final int SYNC_THRESHOLD = 5;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -63,13 +78,27 @@ public final class AdActivity extends AppCompatActivity implements ScanResultCal
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        isVisible = true;
+        startRotation(); // Start rotation only when activity becomes visible
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
-        // Check if state is already not IDLE when starting
         if (StateMachine.getInstance(this).getCurrentState() != AppState.IDLE) {
             Log.i(TAG, "Already in " + StateMachine.getInstance(this).getCurrentState() + " state. Finishing AdActivity.");
             finish();
         }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        isVisible = false;
+        stopRotation(); // Stop rotation when activity is hidden
+        syncAdImpressionsToFirebase(); // Final sync of any pending counts
     }
 
     private void setupSilentCamera() {
@@ -93,24 +122,36 @@ public final class AdActivity extends AppCompatActivity implements ScanResultCal
 
     @SuppressWarnings("unchecked")
     private void updateAdList(DocumentSnapshot doc) {
-        List<String> urls = (List<String>) doc.get("ad_list");
+        List<String> newUrls = (List<String>) doc.get("ad_list");
         Long interval = doc.getLong("interval_seconds");
-        if (urls != null && !urls.isEmpty()) {
-            adUrls.clear();
-            adUrls.addAll(urls);
-            currentAdIndex = 0;
-            if (interval != null) rotationIntervalMs = interval * 1000;
-            startRotation();
+        
+        if (newUrls != null && !newUrls.isEmpty()) {
+            // Only restart if the list or interval has actually changed
+            if (!newUrls.equals(adUrls) || (interval != null && interval * 1000 != rotationIntervalMs)) {
+                adUrls.clear();
+                adUrls.addAll(newUrls);
+                currentAdIndex = 0;
+                if (interval != null) rotationIntervalMs = interval * 1000;
+                
+                if (isVisible) {
+                    startRotation();
+                }
+            }
         }
     }
 
     private void startRotation() {
-        rotationHandler.removeCallbacksAndMessages(null);
+        stopRotation();
         showNextAd();
     }
 
+    private void stopRotation() {
+        rotationHandler.removeCallbacksAndMessages(null);
+    }
+
     private void showNextAd() {
-        if (adUrls.isEmpty()) return;
+        if (!isVisible || adUrls.isEmpty()) return;
+
         String url = adUrls.get(currentAdIndex);
 
         if (url != null && url.startsWith("file:///android_asset/")) {
@@ -124,8 +165,61 @@ public final class AdActivity extends AppCompatActivity implements ScanResultCal
                     .into(ivAd);
         }
 
+        // 🚀 Track Impression ONLY if visible
+        recordAdImpression(url);
+
         currentAdIndex = (currentAdIndex + 1) % adUrls.size();
         rotationHandler.postDelayed(this::showNextAd, rotationIntervalMs);
+    }
+
+    private void recordAdImpression(String url) {
+        if (!isVisible || url == null) return;
+        
+        String adId = sanitizeAdId(url);
+        localAdCounts.put(adId, localAdCounts.getOrDefault(adId, 0L) + 1);
+        pendingTotalImpressions++;
+
+        Log.d(TAG, "Ad impression recorded: " + adId);
+
+        if (pendingTotalImpressions >= SYNC_THRESHOLD) {
+            syncAdImpressionsToFirebase();
+        }
+    }
+
+    private String sanitizeAdId(String url) {
+        String adId = url;
+        if (url.contains("/")) {
+            adId = url.substring(url.lastIndexOf("/") + 1);
+        }
+        return adId.replace(".", "_").replace("#", "_").replace("$", "_")
+                   .replace("[", "_").replace("]", "_").replace("/", "_");
+    }
+
+    private void syncAdImpressionsToFirebase() {
+        if (localAdCounts.isEmpty()) return;
+
+        String shopId = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
+                .getString("shop_mobile", "910000000000");
+        String today = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
+
+        DocumentReference docRef = FirebaseFirestore.getInstance()
+                .collection("shops")
+                .document(shopId)
+                .collection("ad_impressions")
+                .document(today);
+
+        Map<String, Long> impressionsToSync = new HashMap<>(localAdCounts);
+        localAdCounts.clear();
+        pendingTotalImpressions = 0;
+
+        Map<String, Object> updates = new HashMap<>();
+        for (Map.Entry<String, Long> entry : impressionsToSync.entrySet()) {
+            updates.put(entry.getKey(), FieldValue.increment(entry.getValue()));
+        }
+
+        docRef.set(updates, SetOptions.merge())
+                .addOnSuccessListener(aVoid -> Log.i(TAG, "Ad impressions synced successfully"))
+                .addOnFailureListener(e -> Log.e(TAG, "Sync failed", e));
     }
 
     private void loadFromAssets(String path, ImageView imageView) {
@@ -143,7 +237,6 @@ public final class AdActivity extends AppCompatActivity implements ScanResultCal
     @Override
     public void onScanCompleted(List<String> normalizedTexts) {
         Log.i(TAG, "Bottle detected in AdActivity! Waking up...");
-        // Fallback: Force transition just in case
         StateMachine.getInstance(this).transition(StateEvent.ACTIVITY_DETECTED);
         runOnUiThread(this::finish);
     }
@@ -171,6 +264,6 @@ public final class AdActivity extends AppCompatActivity implements ScanResultCal
     protected void onDestroy() {
         super.onDestroy();
         StateMachine.getInstance(this).removeObserver(this);
-        rotationHandler.removeCallbacksAndMessages(null);
+        stopRotation();
     }
 }

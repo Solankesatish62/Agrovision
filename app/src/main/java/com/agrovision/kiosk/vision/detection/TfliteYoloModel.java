@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.graphics.RectF;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 
@@ -49,16 +50,12 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
             MappedByteBuffer model = loadModel(context.getApplicationContext(), assetPath);
 
             Interpreter.Options options = new Interpreter.Options();
+            // 🚀 SPEED FIX: Use 4 CPU threads + XNNPACK for high-speed inference
             options.setNumThreads(4);
-
-            // 🚀 STEP 3: ENABLE HARDWARE ACCELERATION
-            try {
-                nnApiDelegate = new NnApiDelegate();
-                options.addDelegate(nnApiDelegate);
-            } catch (Exception e) {
-                // Fallback to CPU if NNAPI fails
-                options.setUseNNAPI(true);
-            }
+            
+            // Re-enabling standard performance optimizations
+            options.setUseXNNPACK(true); 
+            options.setUseNNAPI(false); // Still force CPU for stability, but with XNNPACK speed
 
             interpreter = new Interpreter(model, options);
 
@@ -97,12 +94,20 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
         if (bitmap == null) return Collections.emptyList();
 
         try {
+            long start = System.currentTimeMillis();
+            
             // 🚀 STEP 1: RESIZE TO MODEL INPUT SIZE
             preprocess(bitmap);
             
+            long prep = System.currentTimeMillis();
+            
             interpreter.run(inputBuffer, outputBuffer);
 
+            long infer = System.currentTimeMillis();
+            
             List<RawDetection> raw = parseOutput(bitmap.getWidth(), bitmap.getHeight());
+            
+            Log.d("YOLO_PERF", String.format("Prep: %dms, Infer: %dms", (prep - start), (infer - prep)));
 
             return applyNms(raw, 0.45f);
 
@@ -114,19 +119,20 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
     /* ================= PREPROCESS ================= */
 
     private void preprocess(Bitmap bitmap) {
-        // 🚀 STEP 1: REDUCE INPUT IMAGE SIZE (Bitmap.createScaledBitmap)
-        Bitmap resized = Bitmap.createScaledBitmap(bitmap, inputWidth, inputHeight, true);
+        // 🚀 OPTIMIZATION: Use scaled pixels directly if possible
+        Bitmap resized = Bitmap.createScaledBitmap(bitmap, inputWidth, inputHeight, false);
         
         resized.getPixels(pixelBuffer, 0, inputWidth, 0, 0, inputWidth, inputHeight);
 
         inputBuffer.rewind();
+        // 🚀 SPEED UP: Avoid division in the loop, use multiplication
+        float normalizer = 1.0f / 255.0f;
         for (int p : pixelBuffer) {
-            inputBuffer.putFloat(((p >> 16) & 0xFF) / 255f);
-            inputBuffer.putFloat(((p >> 8) & 0xFF) / 255f);
-            inputBuffer.putFloat((p & 0xFF) / 255f);
+            inputBuffer.putFloat(((p >> 16) & 0xFF) * normalizer);
+            inputBuffer.putFloat(((p >> 8) & 0xFF) * normalizer);
+            inputBuffer.putFloat((p & 0xFF) * normalizer);
         }
 
-        // Clean up temporary resized bitmap
         if (resized != bitmap) {
             resized.recycle();
         }
@@ -139,27 +145,40 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
         List<RawDetection> detections = new ArrayList<>();
 
         for (int i = 0; i < numBoxes; i++) {
+            // 🚀 CLASS-AGNOSTIC FIX: Find the highest confidence across all class indices
+            // Coordinates are typically indices 0,1,2,3. Classes start at index 4.
+            float maxConf = 0f;
+            int bestClass = -1;
 
-            float conf = isTransposedOutput
-                    ? outputBuffer[0][4][i]
-                    : outputBuffer[0][i][4];
+            for (int c = 4; c < valuesPerBox; c++) {
+                float conf = isTransposedOutput ? outputBuffer[0][c][i] : outputBuffer[0][i][c];
+                if (conf > maxConf) {
+                    maxConf = conf;
+                    bestClass = c - 4;
+                }
+            }
 
-            if (conf <= 0.25f) continue;
+            // 🚀 SENSITIVITY: Lowered to 0.10 for debugging to ensure we catch something
+            if (maxConf <= 0.10f) continue;
 
             float cx = get(0, i, 0);
             float cy = get(0, i, 1);
             float w  = get(0, i, 2);
             float h  = get(0, i, 3);
 
-            float xMultiplier = (cx <= 1.1f && w <= 1.1f) ? srcW : (float) srcW / inputWidth;
-            float yMultiplier = (cy <= 1.1f && h <= 1.1f) ? srcH : (float) srcH / inputHeight;
+            // 🚀 ALWAYS RETURN NORMALIZED COORDINATES [0, 1]
+            // This prevents ambiguous scaling issues downstream.
+            float normCx = (cx > 1.1f) ? cx / inputWidth : cx;
+            float normCy = (cy > 1.1f) ? cy / inputHeight : cy;
+            float normW  = (w > 1.1f) ? w / inputWidth : w;
+            float normH  = (h > 1.1f) ? h / inputHeight : h;
 
-            float left = (cx - w / 2f) * xMultiplier;
-            float top = (cy - h / 2f) * yMultiplier;
-            float right = (cx + w / 2f) * xMultiplier;
-            float bottom = (cy + h / 2f) * yMultiplier;
+            float left   = normCx - normW / 2f;
+            float top    = normCy - normH / 2f;
+            float right  = normCx + normW / 2f;
+            float bottom = normCy + normH / 2f;
 
-            detections.add(new RawDetection(left, top, right, bottom, conf, 0));
+            detections.add(new RawDetection(left, top, right, bottom, maxConf, bestClass));
         }
 
         return detections;

@@ -51,6 +51,9 @@ public final class MedicineMapper {
         entity.imageUrls =
                 StringListConverter.fromList(medicine.getImageUrls());
 
+        entity.audioUrls =
+                StringListConverter.fromList(medicine.getAudioUrls());
+
         entity.usageInstructions = medicine.getUsageInstructions();
         entity.warnings = medicine.getWarnings();
 
@@ -74,6 +77,9 @@ public final class MedicineMapper {
         List<String> images =
                 StringListConverter.toList(entity.imageUrls);
 
+        List<String> audios =
+                StringListConverter.toList(entity.audioUrls);
+
         return new Medicine(
                 entity.id,
                 entity.name,
@@ -82,7 +88,8 @@ public final class MedicineMapper {
                 diseases,
                 entity.usageInstructions,
                 entity.warnings,
-                images
+                images,
+                audios
         );
     }
 }

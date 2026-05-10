@@ -3,4 +3,10 @@
     <string name="app_title">AGROVISION</string>
     <string name="instruction_place_medicine">औषधी समोर ठेवा</string>
     <string name="search_hint">औषधाचे नाव टाईप करा (उदा. Ulala...)</string>
+
+    <string-array name="result_time_options">
+        <item>30 सेकंद</item>
+        <item>45 सेकंद</item>
+        <item>60 सेकंद</item>
+    </string-array>
 </resources>

@@ -21,11 +21,14 @@ import java.util.List;
  */
 public final class StringListConverter {
 
+    private static final String DELIMITER = "\\|";
+    private static final String JOINER = "|";
+
     /**
-     * Converts a List<String> into a CSV string.
+     * Converts a List<String> into a pipe-separated string.
      *
      * Example:
-     * ["Cotton", "Rice"] → "Cotton,Rice"
+     * ["Cotton, Rice", "Wheat"] → "Cotton, Rice|Wheat"
      */
     @TypeConverter
     public static String fromList(List<String> list) {
@@ -41,9 +44,9 @@ public final class StringListConverter {
 
             builder.append(item);
 
-            // Append comma only between elements
+            // Append delimiter only between elements
             if (i < list.size() - 1) {
-                builder.append(",");
+                builder.append(JOINER);
             }
         }
 
@@ -51,10 +54,10 @@ public final class StringListConverter {
     }
 
     /**
-     * Converts a CSV string back into a List<String>.
+     * Converts a pipe-separated string back into a List<String>.
      *
      * Example:
-     * "Cotton,Rice" → ["Cotton", "Rice"]
+     * "Cotton, Rice|Wheat" → ["Cotton, Rice", "Wheat"]
      */
     @TypeConverter
     public static List<String> toList(String value) {
@@ -62,7 +65,7 @@ public final class StringListConverter {
             return Collections.emptyList();
         }
 
-        String[] parts = value.split(",");
+        String[] parts = value.split(DELIMITER);
         List<String> list = new ArrayList<>(parts.length);
 
         for (String part : parts) {

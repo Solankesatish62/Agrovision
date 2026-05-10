@@ -17,11 +17,10 @@ import java.nio.ByteBuffer;
  * ImageUtils
  *
  * PURPOSE:
- * - Convert CameraX ImageProxy → upright RGB Bitmap
+ * - Convert CameraX ImageProxy → RGB Bitmap
  *
  * HARD RULES:
  * - MUST handle YUV_420_888
- * - MUST respect rotationDegrees
  * - MUST NOT close ImageProxy
  */
 public final class ImageUtils {
@@ -31,56 +30,30 @@ public final class ImageUtils {
     }
 
     /**
-     * Convert ImageProxy to upright Bitmap.
-     *
-     * @return Bitmap or null if conversion fails
+     * Convert ImageProxy to Bitmap using a faster direct conversion.
+     * Compatible with OUTPUT_IMAGE_FORMAT_RGBA_8888.
      */
     @Nullable
     public static Bitmap toBitmap(@NonNull ImageProxy image) {
-
-        if (image.getFormat() != ImageFormat.YUV_420_888) {
-            LogUtils.e("Unsupported image format: " + image.getFormat());
-            return null;
-        }
-
         try {
-            // 1️⃣ YUV → NV21 byte array
-            byte[] nv21 = yuv420ToNv21(image);
-
-            // 2️⃣ NV21 → JPEG
-            YuvImage yuvImage = new YuvImage(
-                    nv21,
-                    ImageFormat.NV21,
-                    image.getWidth(),
-                    image.getHeight(),
-                    null
-            );
-
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            yuvImage.compressToJpeg(
-                    new Rect(0, 0, image.getWidth(), image.getHeight()),
-                    90,
-                    out
-            );
-
-            byte[] jpegBytes = out.toByteArray();
-
-            // 3️⃣ JPEG → Bitmap
-            Bitmap bitmap = android.graphics.BitmapFactory
-                    .decodeByteArray(jpegBytes, 0, jpegBytes.length);
-
-            if (bitmap == null) return null;
-
-            // 4️⃣ Apply rotation
-            int rotation = image.getImageInfo().getRotationDegrees();
-            if (rotation != 0) {
-                bitmap = rotate(bitmap, rotation);
+            if (image.getFormat() == android.graphics.ImageFormat.YUV_420_888) {
+                // Fallback for YUV if needed
+                byte[] nv21 = yuv420ToNv21(image);
+                YuvImage yuvImage = new YuvImage(nv21, android.graphics.ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                yuvImage.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), 90, out);
+                byte[] jpegBytes = out.toByteArray();
+                return android.graphics.BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length);
             }
 
+            // 🚀 ULTRA FAST PATH: RGBA_8888 directly to Bitmap
+            // This avoids JPEG compression and is much smoother for the preview.
+            Bitmap bitmap = Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
+            bitmap.copyPixelsFromBuffer(image.getPlanes()[0].getBuffer());
             return bitmap;
 
         } catch (Exception e) {
-            LogUtils.e("ImageProxy → Bitmap failed", e);
+            LogUtils.e("ImageProxy -> Bitmap failed", e);
             return null;
         }
     }

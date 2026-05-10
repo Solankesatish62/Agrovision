@@ -2,9 +2,12 @@ package com.agrovision.kiosk.ui.result;
 
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.content.res.AssetFileDescriptor;
+import android.media.MediaPlayer;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.View;
 import android.widget.ImageButton;
 import android.widget.TextView;
@@ -21,6 +24,7 @@ import com.agrovision.kiosk.state.StateEvent;
 import com.agrovision.kiosk.state.StateMachine;
 import com.agrovision.kiosk.state.StateObserver;
 import com.agrovision.kiosk.ui.home.HomeActivity;
+import com.agrovision.kiosk.ui.result.adapter.ResultInfoAdapter;
 import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
 import com.agrovision.kiosk.util.LogUtils;
@@ -29,6 +33,7 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * ResultActivity
@@ -39,17 +44,22 @@ import java.util.List;
 public final class ResultActivity extends AppCompatActivity
         implements StateObserver {
 
+    private static final String TAG = "ResultActivity";
+
     public static final String EXTRA_SCAN_RESULTS =
             "com.agrovision.kiosk.EXTRA_SCAN_RESULTS";
 
-    private static final long AUTO_ROTATE_MS = 30_000;
+    private static final long AUTO_ROTATE_MS = 60_000;
     private static final long UNKNOWN_TIMEOUT_MS = 3_000;
 
     // UI controls
     private ImageButton btnNext;
     private ImageButton btnPrev;
+    private ImageButton btnMute;
     private MaterialButton btnNewScan;
     private FloatingActionButton btnPause;
+    private ViewPager2 imagePager;
+    private RecyclerView infoList;
 
     // Renderer
     private ResultRenderer renderer;
@@ -59,8 +69,15 @@ public final class ResultActivity extends AppCompatActivity
     private int currentIndex = 0;
     private boolean isPaused = false;
 
-    // Timer System
+    // Medicine Rotation Timer (Switching between medicines)
     private final Handler timerHandler = new Handler(Looper.getMainLooper());
+
+    // Audio Player
+    private MediaPlayer mediaPlayer;
+    private int currentAudioIndex = 0;
+    private List<String> audioUrls;
+    private boolean isAudioPlaying = false;
+    private int lastPlayedIndex = -1;
 
     private final Runnable autoRotateRunnable = () -> {
         LogUtils.d("Timer triggered: automatically showing next result");
@@ -71,6 +88,12 @@ public final class ResultActivity extends AppCompatActivity
         LogUtils.i("Unknown result timeout: returning to scan");
         returnToScan();
     };
+
+    // Image Rotation System (Rotating images of the current medicine)
+    private int currentImageIndex = 0;
+    private List<String> imageUrls;
+    private final Handler imageRotationHandler = new Handler(Looper.getMainLooper());
+    private Runnable imageSwitcher;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -109,6 +132,8 @@ public final class ResultActivity extends AppCompatActivity
         StateMachine.getInstance(getApplicationContext())
                 .removeObserver(this);
         stopTimer();
+        stopImageRotation();
+        stopAudio();
     }
 
     @Override
@@ -121,22 +146,37 @@ public final class ResultActivity extends AppCompatActivity
     private void bindControls() {
         btnNext = findViewById(R.id.btnNext);
         btnPrev = findViewById(R.id.btnPrev);
+        btnMute = findViewById(R.id.btnMute);
         btnNewScan = findViewById(R.id.btnNewScan);
         btnPause = findViewById(R.id.btnPause);
+        imagePager = findViewById(R.id.imagePager);
     }
 
     private void initRenderer() {
         View standardLayout = findViewById(R.id.standardResultLayout);
         View unknownLayout = findViewById(R.id.unknownResultLayout);
         TextView tvMedicineName = findViewById(R.id.tvMedicineName);
-        ViewPager2 imagePager = findViewById(R.id.imagePager);
-        RecyclerView infoList = findViewById(R.id.infoList);
+        infoList = findViewById(R.id.infoList);
         TextView tvUnknownHeader = findViewById(R.id.tvUnknownHeader);
 
         renderer = new ResultRenderer(
                 standardLayout, unknownLayout, tvMedicineName,
                 imagePager, infoList, tvUnknownHeader
         );
+
+        if (imagePager != null) {
+            // Smooth fade transition between images
+            imagePager.setPageTransformer((page, position) -> {
+                page.setAlpha(0.5f + (1 - Math.abs(position)) * 0.5f);
+            });
+
+            imagePager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
+                @Override
+                public void onPageSelected(int position) {
+                    currentImageIndex = position;
+                }
+            });
+        }
     }
 
     private void loadResults() {
@@ -145,6 +185,10 @@ public final class ResultActivity extends AppCompatActivity
 
     private void returnToScan() {
         LogUtils.i("Executing deterministic navigation to HomeActivity");
+
+        stopTimer();
+        stopImageRotation();
+        stopAudio();
 
         StateMachine.getInstance(getApplicationContext())
                 .transition(StateEvent.RESULT_TIMEOUT);
@@ -172,9 +216,28 @@ public final class ResultActivity extends AppCompatActivity
                     .transition(isPaused ? StateEvent.RESUME_REQUESTED : StateEvent.PAUSE_REQUESTED);
         });
 
+        if (btnMute != null) {
+            btnMute.setOnClickListener(v -> {
+                boolean currentlyEnabled = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
+                        .getBoolean("voice_enabled", true);
+                getSharedPreferences("kiosk_settings", MODE_PRIVATE)
+                        .edit().putBoolean("voice_enabled", !currentlyEnabled).apply();
+                
+                if (currentlyEnabled) {
+                    stopAudio();
+                    btnMute.setImageResource(android.R.drawable.ic_lock_silent_mode);
+                } else {
+                    btnMute.setImageResource(android.R.drawable.ic_lock_silent_mode_off);
+                    lastPlayedIndex = -1; // Reset to allow replay
+                    renderCurrent(); // Restart audio
+                }
+            });
+        }
+
         btnNewScan.setOnClickListener(v -> {
             LogUtils.i("New scan button clicked");
             stopTimer();
+            stopImageRotation();
             StateMachine.getInstance(getApplicationContext())
                     .transition(StateEvent.NEW_SCAN_REQUESTED);
             returnToScan();
@@ -190,15 +253,66 @@ public final class ResultActivity extends AppCompatActivity
         ScanResult current = scanResults.get(currentIndex);
         renderer.render(current);
 
+        // Audio playback - only trigger if index changed or forced
+        if (lastPlayedIndex != currentIndex) {
+            this.audioUrls = current.audioUrls;
+            this.currentAudioIndex = 0;
+            playCurrentAudio();
+            lastPlayedIndex = currentIndex;
+        }
+
+        // Reset image rotation for new medicine
+        stopImageRotation();
+        if (current.resultType != ResultType.UNKNOWN) {
+            this.imageUrls = current.imageUrls;
+            this.currentImageIndex = 0;
+            startImageRotation();
+        }
+
+        // Reset medicine auto-rotate timer
         stopTimer();
 
         if (current.resultType == ResultType.UNKNOWN) {
             timerHandler.postDelayed(unknownTimeoutRunnable, UNKNOWN_TIMEOUT_MS);
         } else if (!isPaused) {
-            timerHandler.postDelayed(autoRotateRunnable, AUTO_ROTATE_MS);
+            int timeSec = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
+                    .getInt("RESULT_SCREEN_TIME", 30);
+            timerHandler.postDelayed(autoRotateRunnable, (long) timeSec * 1000);
         }
 
         updatePauseButtonState();
+    }
+
+    private void startImageRotation() {
+        if (imageUrls == null || imageUrls.size() <= 1) {
+            Log.d(TAG, "Image rotation skipped: " + (imageUrls == null ? "null" : imageUrls.size()) + " images");
+            return;
+        }
+
+        Log.i(TAG, "Starting auto-rotation for " + imageUrls.size() + " images");
+
+        imageSwitcher = new Runnable() {
+            @Override
+            public void run() {
+                if (imagePager == null) return;
+
+                int nextIndex = (imagePager.getCurrentItem() + 1) % imageUrls.size();
+                Log.d(TAG, "Rotating image from " + imagePager.getCurrentItem() + " to " + nextIndex);
+                imagePager.setCurrentItem(nextIndex, true);
+
+                imageRotationHandler.postDelayed(this, 3000); // 3 seconds
+            }
+        };
+
+        imageRotationHandler.postDelayed(imageSwitcher, 3000);
+    }
+
+    private void stopImageRotation() {
+        if (imageSwitcher != null) {
+            Log.d(TAG, "Stopping image rotation runnable");
+            imageRotationHandler.removeCallbacks(imageSwitcher);
+            imageSwitcher = null;
+        }
     }
 
     private void showNextResult() {
@@ -206,7 +320,7 @@ public final class ResultActivity extends AppCompatActivity
 
         if (currentIndex + 1 < scanResults.size()) {
             currentIndex++;
-            isPaused = false; // Reset pause on manual navigation
+            isPaused = false;
             renderCurrent();
         } else {
             LogUtils.i("All results displayed. Returning to scan.");
@@ -219,7 +333,7 @@ public final class ResultActivity extends AppCompatActivity
 
         if (currentIndex > 0) {
             currentIndex--;
-            isPaused = false; // Reset pause on manual navigation
+            isPaused = false;
             renderCurrent();
         } else {
             LogUtils.d("Already at first result");
@@ -253,6 +367,7 @@ public final class ResultActivity extends AppCompatActivity
                 case READY:
                 case IDLE:
                     stopTimer();
+                    stopImageRotation();
                     if (!isFinishing()) {
                         finish();
                     }
@@ -264,6 +379,130 @@ public final class ResultActivity extends AppCompatActivity
     private void stopTimer() {
         timerHandler.removeCallbacks(autoRotateRunnable);
         timerHandler.removeCallbacks(unknownTimeoutRunnable);
+    }
+
+    private void playCurrentAudio() {
+        boolean voiceEnabled = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
+                .getBoolean("voice_enabled", true);
+        int volumePercent = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
+                .getInt("voice_volume", 100);
+
+        if (btnMute != null) {
+            btnMute.setImageResource(voiceEnabled 
+                ? android.R.drawable.ic_lock_silent_mode_off 
+                : android.R.drawable.ic_lock_silent_mode);
+        }
+
+        if (audioUrls == null || audioUrls.isEmpty() || isPaused || !voiceEnabled) {
+            stopAudio();
+            return;
+        }
+
+        if (currentAudioIndex >= audioUrls.size()) {
+            return;
+        }
+
+        String path = audioUrls.get(currentAudioIndex);
+        playAudio(path);
+    }
+
+    private void playAudio(String path) {
+        Log.d("AUDIO", "Play requested: " + path);
+
+        if (mediaPlayer != null && mediaPlayer.isPlaying()) {
+            Log.d("AUDIO", "Skipping: already playing");
+            return;
+        }
+
+        isAudioPlaying = true;
+        Log.d("AUDIO", "START PLAY: " + path);
+
+        if (mediaPlayer != null) {
+            try {
+                mediaPlayer.release();
+            } catch (Exception e) {}
+            mediaPlayer = null;
+        }
+
+        mediaPlayer = new MediaPlayer();
+        try {
+            float volume = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
+                    .getInt("voice_volume", 100) / 100f;
+            mediaPlayer.setVolume(volume, volume);
+
+            String assetPath = path.replace("file:///android_asset/", "");
+            
+            try {
+                AssetFileDescriptor afd = getAssets().openFd(assetPath);
+                mediaPlayer.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+                afd.close();
+                Log.d("AUDIO", "File loaded successfully: " + assetPath);
+            } catch (Exception e) {
+                Log.e("AUDIO", "File load failed: " + assetPath, e);
+                isAudioPlaying = false;
+                return;
+            }
+
+            mediaPlayer.setOnCompletionListener(mp -> {
+                Log.d("AUDIO", "COMPLETED: " + path);
+                mp.release();
+                if (mediaPlayer == mp) {
+                    mediaPlayer = null;
+                }
+                isAudioPlaying = false;
+                
+                currentAudioIndex++;
+                if (currentAudioIndex < audioUrls.size()) {
+                    playCurrentAudio();
+                }
+            });
+
+            mediaPlayer.setOnPreparedListener(mp -> {
+                Log.d("AUDIO", "Prepared, starting playback");
+                mp.start();
+            });
+
+            mediaPlayer.setOnErrorListener((mp, what, extra) -> {
+                Log.e("AUDIO", "Error: " + what + " extra: " + extra);
+                mp.release();
+                if (mediaPlayer == mp) {
+                    mediaPlayer = null;
+                }
+                isAudioPlaying = false;
+                return true;
+            });
+
+            mediaPlayer.prepareAsync();
+            LogUtils.i("Audio prepare started: " + path);
+        } catch (Exception e) {
+            LogUtils.e("Error setting up audio: " + path, e);
+            isAudioPlaying = false;
+        }
+    }
+
+    private void stopAudio() {
+        if (mediaPlayer != null) {
+            try {
+                // Remove stop() to avoid error -38 in certain states
+                mediaPlayer.release();
+                Log.d("AUDIO", "MediaPlayer released");
+            } catch (Exception e) {
+                LogUtils.e("Error releasing MediaPlayer", e);
+            }
+            mediaPlayer = null;
+        }
+        isAudioPlaying = false;
+    }
+
+    private void highlightInfoItem(int index) {
+        runOnUiThread(() -> {
+            if (infoList != null && infoList.getAdapter() instanceof ResultInfoAdapter) {
+                ((ResultInfoAdapter) infoList.getAdapter()).setHighlightedPosition(index);
+                if (index != -1) {
+                    infoList.smoothScrollToPosition(index);
+                }
+            }
+        });
     }
 
     private void blockBackNavigation() {
@@ -287,5 +526,7 @@ public final class ResultActivity extends AppCompatActivity
     protected void onDestroy() {
         super.onDestroy();
         stopTimer();
+        stopImageRotation();
+        stopAudio();
     }
 }

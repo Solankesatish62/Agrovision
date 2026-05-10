@@ -216,7 +216,8 @@ public final class MedicineRepository {
                 jsonArrayToList(obj.optJSONArray("supportedDiseases")),
                 obj.optString("usageInstructions"),
                 obj.optString("warnings"),
-                jsonArrayToList(obj.optJSONArray("imageUrls"))
+                jsonArrayToList(obj.optJSONArray("imageUrls")),
+                jsonArrayToList(obj.optJSONArray("audioUrls"))
         );
     }
 
@@ -239,7 +240,8 @@ public final class MedicineRepository {
                     safeGetList(doc, "supportedDiseases"),
                     doc.getString("usageInstructions"),
                     doc.getString("warnings"),
-                    safeGetList(doc, "imageUrls")
+                    safeGetList(doc, "imageUrls"),
+                    safeGetList(doc, "audioUrls")
             );
         } catch (Exception e) {
             Log.e(TAG, "Firebase: Critical error parsing document " + doc.getId(), e);

@@ -61,6 +61,10 @@ public final class Medicine {
     // IMMUTABLE defensive copy stored internally.
     private final List<String> imageUrls;
 
+    // List of audio URLs for this medicine.
+    // IMMUTABLE defensive copy stored internally.
+    private final List<String> audioUrls;
+
     /**
      * Constructor.
      *
@@ -78,7 +82,8 @@ public final class Medicine {
             List<String> supportedDiseases,
             String usageInstructions,
             String warnings,
-            List<String> imageUrls
+            List<String> imageUrls,
+            List<String> audioUrls
     ) {
         // Assign immutable scalar fields directly.
         this.id = id;
@@ -120,6 +125,15 @@ public final class Medicine {
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(
                 new ArrayList<>(imageUrls)
+        );
+
+        /*
+         * Defensive copy for audioUrls.
+         */
+        this.audioUrls = audioUrls == null
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(
+                new ArrayList<>(audioUrls)
         );
 
         // Assign textual fields.
@@ -182,6 +196,13 @@ public final class Medicine {
      */
     public List<String> getImageUrls() {
         return imageUrls;
+    }
+
+    /**
+     * Returns the list of audio URLs.
+     */
+    public List<String> getAudioUrls() {
+        return audioUrls;
     }
 
     /* =========================================================

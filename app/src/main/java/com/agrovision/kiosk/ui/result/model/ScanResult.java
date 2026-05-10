@@ -20,6 +20,7 @@ public final class ScanResult implements Parcelable {
     public final String medicineId;
     public final String displayName;
     public final List<String> imageUrls;
+    public final List<String> audioUrls;
     public final List<ResultInfoItem> infoItems;
 
     // UNKNOWN / diagnostics
@@ -31,6 +32,7 @@ public final class ScanResult implements Parcelable {
             String medicineId,
             String displayName,
             List<String> imageUrls,
+            List<String> audioUrls,
             List<ResultInfoItem> infoItems,
             String rawOcrText,
             boolean isConfidenceLow
@@ -39,6 +41,7 @@ public final class ScanResult implements Parcelable {
         this.medicineId = medicineId;
         this.displayName = displayName;
         this.imageUrls = imageUrls != null ? imageUrls : new ArrayList<>();
+        this.audioUrls = audioUrls != null ? audioUrls : new ArrayList<>();
         this.infoItems = infoItems;
         this.rawOcrText = rawOcrText;
         this.isConfidenceLow = isConfidenceLow;
@@ -51,6 +54,9 @@ public final class ScanResult implements Parcelable {
         
         imageUrls = new ArrayList<>();
         in.readStringList(imageUrls);
+
+        audioUrls = new ArrayList<>();
+        in.readStringList(audioUrls);
         
         infoItems = in.createTypedArrayList(ResultInfoItem.CREATOR);
         
@@ -64,6 +70,7 @@ public final class ScanResult implements Parcelable {
         dest.writeString(medicineId);
         dest.writeString(displayName);
         dest.writeStringList(imageUrls);
+        dest.writeStringList(audioUrls);
         dest.writeTypedList(infoItems);
         dest.writeString(rawOcrText);
         dest.writeByte((byte) (isConfidenceLow ? 1 : 0));

@@ -1,0 +1,41 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="400dp"
+    android:height="150dp"
+    android:viewportWidth="400"
+    android:viewportHeight="150">
+
+    <!-- Path representing the text "AgroVision" with custom styling -->
+    <!-- Note: In a real scenario, this would be a complex path or a PNG.
+         Here I'll create a stylized representation using basic shapes and text emulation
+         to match the requested look: Green "Agro", Orange "Vision" with a bottom curve. -->
+
+    <!-- The Curve below the text -->
+    <path
+        android:pathData="M80,110 Q200,135 320,110"
+        android:strokeWidth="4"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="80"
+                android:startY="110"
+                android:endX="320"
+                android:endY="110"
+                android:type="linear">
+                <item android:offset="0" android:color="#006400" />
+                <item android:offset="0.6" android:color="#FF8C00" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Stylized 'A' -->
+    <path
+        android:fillColor="#006400"
+        android:pathData="M60,95 L75,45 L90,95 L82,95 L75,75 L68,95 Z" />
+
+    <!-- Stylized 'V' -->
+    <path
+        android:fillColor="#FF8C00"
+        android:pathData="M210,45 L225,95 L240,45 L232,45 L225,75 L218,45 Z" />
+
+</vector>

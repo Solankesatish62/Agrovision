@@ -3,6 +3,7 @@ package com.agrovision.kiosk.camera;
 import android.util.Size;
 
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ExperimentalLensFacing;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageCapture;
 
@@ -26,8 +27,9 @@ public final class CameraConfig {
        CAMERA SELECTION
        ========================================================= */
 
-    // Back camera is mandatory for medicine scanning
-    public static final int LENS_FACING = CameraSelector.LENS_FACING_BACK;
+    // Kiosk devices often use external USB cameras or internal cameras mapped as EXTERNAL
+    @ExperimentalLensFacing
+    public static final int LENS_FACING = CameraSelector.LENS_FACING_EXTERNAL;
 
     /* =========================================================
        RESOLUTION & FORMAT
@@ -36,23 +38,21 @@ public final class CameraConfig {
     /**
      * Fixed analysis resolution.
      *
-     * WHY:
-     * - YOLO prefers consistent input size
-     * - Reduces device-specific variance
-     * - Avoids runtime scaling surprises
+     * 720p is the sweet spot for YOLO bottle detection.
+     * With RGBA optimization, this is now smooth on kiosk hardware.
      */
     public static final Size ANALYSIS_RESOLUTION = new Size(1280, 720);
 
     /**
      * Image format for analysis.
      *
-     * YUV is:
-     * - Faster
-     * - Native to CameraX
-     * - ML-friendly
+     * RGBA_8888 is:
+     * - Faster to convert to Bitmap
+     * - Supported in CameraX 1.1+
+     * - Reduces CPU overhead significantly
      */
     public static final int IMAGE_FORMAT =
-            ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888;
+            ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888;
 
     /* =========================================================
        FRAME RATE CONTROL

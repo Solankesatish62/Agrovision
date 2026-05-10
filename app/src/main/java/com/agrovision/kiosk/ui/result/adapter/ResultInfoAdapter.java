@@ -24,9 +24,17 @@ import java.util.List;
 public final class ResultInfoAdapter extends RecyclerView.Adapter<ResultInfoAdapter.VH> {
 
     private final List<ResultInfoItem> items;
+    private int highlightedPosition = -1;
 
     public ResultInfoAdapter(List<ResultInfoItem> items) {
         this.items = (items != null) ? items : Collections.emptyList();
+    }
+
+    public void setHighlightedPosition(int position) {
+        int previous = this.highlightedPosition;
+        this.highlightedPosition = position;
+        if (previous != -1) notifyItemChanged(previous);
+        if (position != -1) notifyItemChanged(position);
     }
 
     @NonNull
@@ -41,6 +49,14 @@ public final class ResultInfoAdapter extends RecyclerView.Adapter<ResultInfoAdap
     public void onBindViewHolder(@NonNull VH h, int position) {
         ResultInfoItem item = items.get(position);
         h.text.setText(item.text);
+
+        // Highlight logic
+        if (position == highlightedPosition) {
+            h.card.setStrokeColor(h.itemView.getContext().getColor(R.color.bg_info_success));
+            h.card.setStrokeWidth(4);
+        } else {
+            h.card.setStrokeWidth(0);
+        }
 
         // 🎨 Design mapping from Figma (Crops=Green, Pests=Blue, Timing=Orange, etc.)
         switch (item.type) {

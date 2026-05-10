@@ -73,4 +73,11 @@ public class MedicineEntity {
      * Stored as CSV string via StringListConverter.
      */
     public String imageUrls;
+
+    /**
+     * Audio URLs.
+     *
+     * Stored as CSV string via StringListConverter.
+     */
+    public String audioUrls;
 }

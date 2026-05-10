@@ -69,6 +69,7 @@ public final class RecognitionPipelineOrchestrator {
                         medicine.getId(),
                         medicine.getName(),
                         medicine.getImageUrls(),
+                        medicine.getAudioUrls(),
                         infoItems,
                         text,
                         match.isLowConfidence()
@@ -82,6 +83,7 @@ public final class RecognitionPipelineOrchestrator {
                         ResultType.UNKNOWN,
                         null,
                         "Unknown Medicine",
+                        Collections.emptyList(),
                         Collections.emptyList(),
                         Collections.emptyList(),
                         text,

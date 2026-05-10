@@ -30,7 +30,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="#000000"
-                android:textSize="32sp"
+                android:textSize="56sp"
                 android:textStyle="bold"
                 tools:text="Medicine Name" />
 
@@ -40,6 +40,16 @@
                 android:layout_height="40dp"
                 android:layout_marginStart="12dp"
                 android:src="@drawable/ic_launcher_foreground"
+                android:visibility="gone"
+                app:tint="#4CAF50" />
+
+            <ImageButton
+                android:id="@+id/btnMute"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="16dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_lock_silent_mode_off"
                 app:tint="#4CAF50" />
         </LinearLayout>
 
@@ -64,7 +74,7 @@
             android:gravity="center"
             android:text="टीप: परिस्थितीनुसार परिणाम बदलू शकतो"
             android:textColor="#AAAAAA"
-            android:textSize="12sp"
+            android:textSize="20sp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toStartOf="@+id/guidelineCenter"
             app:layout_constraintStart_toStartOf="parent" />
@@ -124,10 +134,10 @@
                 android:id="@+id/tvUnknownHeader"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:lineSpacingExtra="8dp"
-                android:padding="32dp"
+                android:lineSpacingExtra="12dp"
+                android:padding="48dp"
                 android:textColor="#7A2E2E"
-                android:textSize="20sp"
+                android:textSize="32sp"
                 tools:text="या scan मध्ये Medicine-A हे औषधं system मध्ये उपलब्ध नाही.\nआम्ही त्यावर काम करत आहोत आणि लवकरच उपलब्ध करण्यात येईल." />
         </com.google.android.material.card.MaterialCardView>
     </androidx.constraintlayout.widget.ConstraintLayout>
@@ -149,11 +159,13 @@
             android:id="@+id/btnNewScan"
             style="@style/Widget.Material3.Button.TonalButton"
             android:layout_width="wrap_content"
-            android:layout_height="56dp"
+            android:layout_height="80dp"
             android:text="नवीन Scan"
             android:textColor="#333333"
-            app:cornerRadius="16dp"
-            app:icon="@android:drawable/ic_menu_search" />
+            android:textSize="24sp"
+            app:cornerRadius="20dp"
+            app:icon="@android:drawable/ic_menu_search"
+            app:iconSize="32dp" />
 
         <LinearLayout
             android:layout_width="wrap_content"
@@ -164,21 +176,21 @@
 
             <ImageButton
                 android:id="@+id/btnPrev"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@android:drawable/ic_media_previous" />
 
             <View
                 android:layout_width="1dp"
-                android:layout_height="24dp"
+                android:layout_height="40dp"
                 android:layout_gravity="center_vertical"
                 android:background="#DDDDDD" />
 
             <ImageButton
                 android:id="@+id/btnNext"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@android:drawable/ic_media_next" />
         </LinearLayout>

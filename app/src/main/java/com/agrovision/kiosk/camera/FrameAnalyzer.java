@@ -22,7 +22,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class FrameAnalyzer implements ImageAnalysis.Analyzer {
 
-    private final AtomicBoolean isProcessing = new AtomicBoolean(false);
     private long lastWarningTime = 0;
     private static final long WARNING_COOLDOWN_MS = 2000;
 
@@ -41,13 +40,6 @@ public final class FrameAnalyzer implements ImageAnalysis.Analyzer {
 
     @Override
     public void analyze(@NonNull ImageProxy image) {
-
-        // 🚫 Drop if already processing
-        if (!isProcessing.compareAndSet(false, true)) {
-            image.close();
-            return;
-        }
-
         try {
             // 1️⃣ Lighting check (informational only)
             if (luminosityAnalyzer.isTooDark(image)) {
@@ -67,7 +59,6 @@ public final class FrameAnalyzer implements ImageAnalysis.Analyzer {
         } finally {
             // ✅ CRITICAL FIX: Always close the image to release the buffer back to CameraX
             image.close();
-            isProcessing.set(false);
         }
     }
 

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/switchVoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="आवाज चालू करा (Enable Voice)"
+        android:textSize="18sp"
+        android:padding="8dp"/>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="आवाज पातळी (Volume)"
+        android:layout_marginTop="16dp"
+        android:textSize="16sp"
+        android:padding="8dp"/>
+
+    <SeekBar
+        android:id="@+id/seekBarVolume"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="100" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="निकाल स्क्रीन वेळ (Result Screen Time)"
+        android:layout_marginTop="16dp"
+        android:textSize="16sp"
+        android:padding="8dp"/>
+
+    <Spinner
+        android:id="@+id/spinnerResultTime"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:padding="8dp" />
+
+</LinearLayout>
