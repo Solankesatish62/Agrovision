@@ -28,5 +28,10 @@ public enum StateEvent {
 
     // ---------- Idle ----------
     IDLE_TIMEOUT,           // No activity for configured duration
-    ACTIVITY_DETECTED       // Any interaction while idle
+    ACTIVITY_DETECTED,      // Any interaction while idle
+
+    // ---------- Ads ----------
+    SCAN_AD_TRIGGERED,      // 🚀 3 successful scans reached
+    IDLE_AD_TRIGGERED,      // 🚀 Idle timeout reached
+    AD_COMPLETED            // 🚀 Advertisement finished
 }

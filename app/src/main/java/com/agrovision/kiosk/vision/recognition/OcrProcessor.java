@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 
@@ -43,31 +44,35 @@ public final class OcrProcessor {
     public void process(@NonNull Bitmap bitmap,
                         @NonNull Callback callback) {
 
-        if (!isProcessing.getAndSet(true)) {
-            try {
-                InputImage image = InputImage.fromBitmap(bitmap, 0);
+        if (isProcessing.getAndSet(true)) {
+            Log.w("PIPELINE_TRACE", "OCR Busy - skipping frame");
+            mainHandler.post(() -> callback.onResult(""));
+            return;
+        }
 
-                recognizer.process(image)
-                        .addOnSuccessListener(result -> {
-                            String rawText = extractText(result);
-                            
-                            String cleaned = TextCleaner.clean(rawText);
-                            String normalized = TextNormalizer.normalize(cleaned);
+        try {
+            InputImage image = InputImage.fromBitmap(bitmap, 0);
 
-                            mainHandler.post(() -> callback.onResult(normalized));
-                            isProcessing.set(false);
-                        })
-                        .addOnFailureListener(e -> {
-                            LogUtils.e("OCR Process failed", e);
-                            mainHandler.post(() -> callback.onResult(""));
-                            isProcessing.set(false);
-                        });
+            recognizer.process(image)
+                    .addOnSuccessListener(result -> {
+                        String rawText = extractText(result);
+                        
+                        String cleaned = TextCleaner.clean(rawText);
+                        String normalized = TextNormalizer.normalize(cleaned);
 
-            } catch (Exception e) {
-                LogUtils.e("OCR Exception", e);
-                mainHandler.post(() -> callback.onResult(""));
-                isProcessing.set(false);
-            }
+                        isProcessing.set(false);
+                        mainHandler.post(() -> callback.onResult(normalized));
+                    })
+                    .addOnFailureListener(e -> {
+                        LogUtils.e("OCR Process failed", e);
+                        isProcessing.set(false);
+                        mainHandler.post(() -> callback.onResult(""));
+                    });
+
+        } catch (Exception e) {
+            LogUtils.e("OCR Exception", e);
+            isProcessing.set(false);
+            mainHandler.post(() -> callback.onResult(""));
         }
     }
 

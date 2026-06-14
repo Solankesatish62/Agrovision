@@ -1,6 +1,7 @@
 package com.agrovision.kiosk.ui.result;
 
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.res.AssetFileDescriptor;
 import android.media.MediaPlayer;
@@ -19,18 +20,22 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
 
 import com.agrovision.kiosk.R;
+import com.agrovision.kiosk.camera.CameraController;
 import com.agrovision.kiosk.state.AppState;
 import com.agrovision.kiosk.state.StateEvent;
 import com.agrovision.kiosk.state.StateMachine;
 import com.agrovision.kiosk.state.StateObserver;
+import com.agrovision.kiosk.ui.ad.AdActivity;
 import com.agrovision.kiosk.ui.home.HomeActivity;
 import com.agrovision.kiosk.ui.result.adapter.ResultInfoAdapter;
 import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
+import com.agrovision.kiosk.util.AudioCacheManager;
 import com.agrovision.kiosk.util.LogUtils;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -51,6 +56,7 @@ public final class ResultActivity extends AppCompatActivity
 
     private static final long AUTO_ROTATE_MS = 60_000;
     private static final long UNKNOWN_TIMEOUT_MS = 3_000;
+    private static final long PAUSE_TIMEOUT_MS = 120_000;
 
     // UI controls
     private ImageButton btnNext;
@@ -75,7 +81,6 @@ public final class ResultActivity extends AppCompatActivity
     // Audio Player
     private MediaPlayer mediaPlayer;
     private int currentAudioIndex = 0;
-    private List<String> audioUrls;
     private boolean isAudioPlaying = false;
     private int lastPlayedIndex = -1;
 
@@ -86,6 +91,11 @@ public final class ResultActivity extends AppCompatActivity
 
     private final Runnable unknownTimeoutRunnable = () -> {
         LogUtils.i("Unknown result timeout: returning to scan");
+        returnToScan();
+    };
+
+    private final Runnable pauseTimeoutRunnable = () -> {
+        LogUtils.i("Pause timer expired: returning to scan");
         returnToScan();
     };
 
@@ -104,6 +114,9 @@ public final class ResultActivity extends AppCompatActivity
 
         blockBackNavigation();
         hideSystemUI();
+
+        // 🚀 DISABLE DETECTION while result is showing
+        CameraController.getInstance(this).setDetectionEnabled(false);
 
         bindControls();
         initRenderer();
@@ -190,12 +203,36 @@ public final class ResultActivity extends AppCompatActivity
         stopImageRotation();
         stopAudio();
 
+        // Check if we should show a scan-triggered ad
+        SharedPreferences prefs = getSharedPreferences("scan_stats", MODE_PRIVATE);
+        int successfulCount = prefs.getInt("successful_ad_count", 0);
+
+        if (successfulCount >= 3) {
+            Log.i("AD_DEBUG", "3 successful scans reached. Triggering SCAN_AD.");
+            
+            // Reset counter IMMEDIATELY
+            prefs.edit().putInt("successful_ad_count", 0).apply();
+            
+            // transition BEFORE starting activity
+            StateMachine.getInstance(getApplicationContext()).transition(StateEvent.SCAN_AD_TRIGGERED);
+            
+            Log.d("AD_DEBUG", "Launching AdActivity (SCAN mode)");
+            Intent intent = new Intent(this, AdActivity.class);
+            intent.putExtra(AdActivity.EXTRA_AD_TYPE, AdActivity.AdType.SCAN);
+            intent.putExtra(AdActivity.EXTRA_AD_DURATION, 8000L); // 8 seconds for scan ad
+            startActivity(intent);
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+            finish();
+            return;
+        }
+
         StateMachine.getInstance(getApplicationContext())
                 .transition(StateEvent.RESULT_TIMEOUT);
 
         Intent intent = new Intent(ResultActivity.this, HomeActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(intent);
+        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
         finish();
     }
 
@@ -255,7 +292,6 @@ public final class ResultActivity extends AppCompatActivity
 
         // Audio playback - only trigger if index changed or forced
         if (lastPlayedIndex != currentIndex) {
-            this.audioUrls = current.audioUrls;
             this.currentAudioIndex = 0;
             playCurrentAudio();
             lastPlayedIndex = currentIndex;
@@ -274,10 +310,17 @@ public final class ResultActivity extends AppCompatActivity
 
         if (current.resultType == ResultType.UNKNOWN) {
             timerHandler.postDelayed(unknownTimeoutRunnable, UNKNOWN_TIMEOUT_MS);
+            LogUtils.d("Unknown result timer started: 3s");
         } else if (!isPaused) {
             int timeSec = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
                     .getInt("RESULT_SCREEN_TIME", 30);
             timerHandler.postDelayed(autoRotateRunnable, (long) timeSec * 1000);
+            LogUtils.d("Configured timer started: " + timeSec + "s");
+        } else {
+            LogUtils.d("Timer reset blocked due to pause. Pause timer remains active.");
+            // We refresh the pause timer to give 2 minutes from last navigation/action
+            timerHandler.postDelayed(pauseTimeoutRunnable, PAUSE_TIMEOUT_MS);
+            LogUtils.d("Pause timer refreshed: 120s");
         }
 
         updatePauseButtonState();
@@ -352,14 +395,19 @@ public final class ResultActivity extends AppCompatActivity
             LogUtils.d("ResultActivity observed state: " + state);
             switch (state) {
                 case RESULT_PAUSED:
-                    LogUtils.i("Result paused");
+                    LogUtils.i("Pause override activated - temporarily overriding timer");
                     isPaused = true;
                     stopTimer();
+                    timerHandler.postDelayed(pauseTimeoutRunnable, PAUSE_TIMEOUT_MS);
+                    LogUtils.d("Pause timer started: 120s");
                     updatePauseButtonState();
                     break;
 
                 case RESULT_AUTO:
                 case RESULT_MANUAL_NAV:
+                    if (isPaused) {
+                        LogUtils.i("Normal timer restored - pause ended");
+                    }
                     isPaused = false;
                     renderCurrent();
                     break;
@@ -377,15 +425,13 @@ public final class ResultActivity extends AppCompatActivity
     }
 
     private void stopTimer() {
-        timerHandler.removeCallbacks(autoRotateRunnable);
-        timerHandler.removeCallbacks(unknownTimeoutRunnable);
+        LogUtils.d("Stopping all timers (clearing Handler)");
+        timerHandler.removeCallbacksAndMessages(null);
     }
 
     private void playCurrentAudio() {
         boolean voiceEnabled = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
                 .getBoolean("voice_enabled", true);
-        int volumePercent = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
-                .getInt("voice_volume", 100);
 
         if (btnMute != null) {
             btnMute.setImageResource(voiceEnabled 
@@ -393,29 +439,65 @@ public final class ResultActivity extends AppCompatActivity
                 : android.R.drawable.ic_lock_silent_mode);
         }
 
-        if (audioUrls == null || audioUrls.isEmpty() || isPaused || !voiceEnabled) {
+        if (scanResults == null || currentIndex >= scanResults.size() || isPaused || !voiceEnabled) {
             stopAudio();
             return;
         }
 
-        if (currentAudioIndex >= audioUrls.size()) {
+        ScanResult current = scanResults.get(currentIndex);
+        List<String> urls = current.audioUrls;
+
+        if (urls == null || urls.isEmpty() || currentAudioIndex >= urls.size()) {
+            stopAudio();
             return;
         }
 
-        String path = audioUrls.get(currentAudioIndex);
-        playAudio(path);
+        String path = urls.get(currentAudioIndex);
+        playAudio(current.medicineId, currentAudioIndex, path);
     }
 
-    private void playAudio(String path) {
-        Log.d("AUDIO", "Play requested: " + path);
+    private void playAudio(String medicineId, int index, String url) {
+        Log.d("AUDIO", "Play requested for: " + medicineId + " index: " + index);
 
         if (mediaPlayer != null && mediaPlayer.isPlaying()) {
             Log.d("AUDIO", "Skipping: already playing");
             return;
         }
 
+        AudioCacheManager cacheManager = AudioCacheManager.getInstance(this);
+        String cachedPath = cacheManager.getCachedAudioPath(medicineId, index);
+
+        if (cachedPath == null) {
+            Log.d("AUDIO", "cache miss: " + medicineId + " index: " + index);
+            Log.d("AUDIO", "Cache MISS - downloading: " + url);
+            cacheManager.prefetchAudio(medicineId, index, url, new AudioCacheManager.Callback() {
+                @Override
+                public void onDownloadCompleted(String path) {
+                    // Check if this result is still the one being shown
+                    runOnUiThread(() -> {
+                        if (scanResults != null && currentIndex < scanResults.size()) {
+                            ScanResult current = scanResults.get(currentIndex);
+                            if (current.medicineId.equals(medicineId) && currentAudioIndex == index) {
+                                Log.d("AUDIO", "Download completed for current result, starting playback");
+                                playAudio(medicineId, index, url); // Re-call to play from cached path
+                            }
+                        }
+                    });
+                }
+
+                @Override
+                public void onDownloadFailed(Exception e) {
+                    Log.e("AUDIO", "Download failed during play attempt", e);
+                }
+            });
+            return; 
+        }
+
+        Log.d("AUDIO", "cache hit: " + medicineId + " index: " + index + " path: " + cachedPath);
         isAudioPlaying = true;
-        Log.d("AUDIO", "START PLAY: " + path);
+        Log.d("AUDIO", "START PLAY from local cache: " + cachedPath);
+        Log.d("AUDIO", "local file path: " + cachedPath);
+        Log.d("AUDIO", "MediaPlayer source path: " + cachedPath);
 
         if (mediaPlayer != null) {
             try {
@@ -430,21 +512,19 @@ public final class ResultActivity extends AppCompatActivity
                     .getInt("voice_volume", 100) / 100f;
             mediaPlayer.setVolume(volume, volume);
 
-            String assetPath = path.replace("file:///android_asset/", "");
-            
             try {
-                AssetFileDescriptor afd = getAssets().openFd(assetPath);
-                mediaPlayer.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
-                afd.close();
-                Log.d("AUDIO", "File loaded successfully: " + assetPath);
+                mediaPlayer.setDataSource(cachedPath);
+                Log.d("AUDIO", "Local file set successfully: " + cachedPath);
             } catch (Exception e) {
-                Log.e("AUDIO", "File load failed: " + assetPath, e);
+                Log.e("AUDIO", "Local file set failed: " + cachedPath, e);
+                // Step 4: DELETE CORRUPTED CACHE
+                cacheManager.deleteCachedFile(medicineId, index);
                 isAudioPlaying = false;
                 return;
             }
 
             mediaPlayer.setOnCompletionListener(mp -> {
-                Log.d("AUDIO", "COMPLETED: " + path);
+                Log.d("AUDIO", "COMPLETED: " + cachedPath);
                 mp.release();
                 if (mediaPlayer == mp) {
                     mediaPlayer = null;
@@ -452,30 +532,37 @@ public final class ResultActivity extends AppCompatActivity
                 isAudioPlaying = false;
                 
                 currentAudioIndex++;
-                if (currentAudioIndex < audioUrls.size()) {
-                    playCurrentAudio();
-                }
+                playCurrentAudio(); // Try next audio if any
             });
 
             mediaPlayer.setOnPreparedListener(mp -> {
-                Log.d("AUDIO", "Prepared, starting playback");
+                Log.d("AUDIO", "playback started");
                 mp.start();
             });
 
             mediaPlayer.setOnErrorListener((mp, what, extra) -> {
-                Log.e("AUDIO", "Error: " + what + " extra: " + extra);
+                Log.e("AUDIO", "playback failure reason: what=" + what + " extra=" + extra);
+                
+                // Step 4: DELETE CORRUPTED CACHE
+                cacheManager.deleteCachedFile(medicineId, index);
+                
                 mp.release();
                 if (mediaPlayer == mp) {
                     mediaPlayer = null;
                 }
                 isAudioPlaying = false;
+                
+                // Fallback: move to next audio if available
+                currentAudioIndex++;
+                playCurrentAudio();
+
                 return true;
             });
 
             mediaPlayer.prepareAsync();
-            LogUtils.i("Audio prepare started: " + path);
+            LogUtils.i("Audio prepare started (cached): " + cachedPath);
         } catch (Exception e) {
-            LogUtils.e("Error setting up audio: " + path, e);
+            LogUtils.e("Error setting up audio: " + cachedPath, e);
             isAudioPlaying = false;
         }
     }

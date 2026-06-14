@@ -10,5 +10,7 @@ public enum AppState {
     RESULT_MANUAL_NAV,  // Manual navigation
     RESULT_PAUSED,      // Frozen screen
     RESULT_UNKNOWN,     // 🚀 Medicine not recognized
-    IDLE                // Inactive
+    IDLE,               // Inactive
+    SCAN_AD,            // Ad after 3 successful scans
+    IDLE_AD             // Ad when idle
 }

@@ -74,16 +74,6 @@
                 android:scaleType="fitXY"
                 android:src="@drawable/agro_curve" />
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/tvSubtitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="औषधी समोर ठेवा"
-            android:textColor="#555555"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:layout_marginTop="16dp" />
     </LinearLayout>
 
     <!-- =====================================================
@@ -93,18 +83,16 @@
         android:id="@+id/cameraCard"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="40dp"
-        android:layout_marginBottom="40dp"
+        android:layout_marginTop="32dp"
         app:cardCornerRadius="24dp"
         app:cardElevation="12dp"
         app:strokeWidth="0dp"
         app:layout_constraintDimensionRatio="16:9"
         app:layout_constraintTop_toBottomOf="@id/topSection"
-        app:layout_constraintBottom_toTopOf="@id/searchContainer"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintWidth_percent="0.55"
-        app:layout_constrainedHeight="true">
+        app:layout_constraintBottom_toTopOf="@+id/instructionContainer">
 
         <FrameLayout
             android:layout_width="match_parent"
@@ -127,46 +115,38 @@
     </com.google.android.material.card.MaterialCardView>
 
     <!-- =====================================================
-         BOTTOM SECTION: Manual Search Bar
+         INSTRUCTION SECTION: Main Guidance
          ===================================================== -->
     <LinearLayout
-        android:id="@+id/searchContainer"
-        android:layout_width="0dp"
-        android:layout_height="64dp"
-        android:orientation="horizontal"
-        android:background="@drawable/bg_search"
-        android:elevation="6dp"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:layout_marginBottom="48dp"
-        android:gravity="center_vertical"
+        android:id="@+id/instructionContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        app:layout_constraintTop_toBottomOf="@id/cameraCard"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintWidth_percent="0.6">
+        android:layout_marginTop="24dp"
+        android:layout_marginBottom="48dp">
 
-        <ImageView
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:src="@android:drawable/ic_menu_search"
-            android:contentDescription="Search Icon"
-            app:tint="#999999" />
+        <TextView
+            android:id="@+id/tvSubtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="औषधी समोर ठेवा"
+            android:textColor="#2E7D32"
+            android:textSize="48sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.02" />
 
-        <EditText
-            android:id="@+id/etManualSearch"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:hint="औषधाचे नाव टाईप करा (उदा. Ulala...)"
-            android:background="@android:color/transparent"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:inputType="text"
-            android:textColor="#333333"
-            android:textColorHint="#999999"
-            android:textSize="20sp"
-            android:importantForAutofill="no" />
-
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="स्कॅन करण्यासाठी औषधाची बाटली समोर ठेवा"
+            android:textColor="#757575"
+            android:textSize="18sp"
+            android:layout_marginTop="4dp" />
     </LinearLayout>
 
     <!-- =====================================================

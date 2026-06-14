@@ -1,8 +1,5 @@
 package com.agrovision.kiosk.ui.result.adapter;
 
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -12,9 +9,10 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.agrovision.kiosk.R;
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.Collections;
 import java.util.List;
 
@@ -23,12 +21,11 @@ import java.util.List;
  *
  * PURPOSE:
  * - Render visual representations of the medicine.
- * - Supports loading images directly from Assets.
+ * - Supports loading images from Firebase Storage with Glide caching.
  */
 public final class ResultImageAdapter
         extends RecyclerView.Adapter<ResultImageAdapter.VH> {
 
-    private static final String TAG = "ResultImageAdapter";
     private final List<String> imageUrls;
 
     public ResultImageAdapter(@NonNull List<String> imageUrls) {
@@ -48,23 +45,13 @@ public final class ResultImageAdapter
         String url = imageUrls.get(position);
         if (url == null) return;
 
-        // asset paths are like: file:///android_asset/images/ulala_1.jpg
-        if (url.startsWith("file:///android_asset/")) {
-            String assetPath = url.replace("file:///android_asset/", "");
-            
-            try (InputStream is = h.itemView.getContext().getAssets().open(assetPath)) {
-                Bitmap bitmap = BitmapFactory.decodeStream(is);
-                if (bitmap != null) {
-                    h.image.setImageBitmap(bitmap);
-                } else {
-                    Log.e(TAG, "Failed to decode bitmap for: " + assetPath);
-                    h.image.setImageResource(android.R.drawable.ic_menu_report_image);
-                }
-            } catch (IOException e) {
-                Log.e(TAG, "Error loading asset image: " + assetPath, e);
-                h.image.setImageResource(android.R.drawable.ic_menu_report_image);
-            }
-        }
+        Glide.with(h.itemView.getContext())
+                .load(url)
+                .transition(DrawableTransitionOptions.withCrossFade())
+                .placeholder(R.drawable.ic_launcher_background)
+                .error(android.R.drawable.ic_menu_report_image)
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .into(h.image);
     }
 
     @Override

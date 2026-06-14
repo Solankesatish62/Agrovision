@@ -10,7 +10,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import android.view.KeyEvent;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
@@ -36,9 +35,12 @@ import com.agrovision.kiosk.state.StateEvent;
 import com.agrovision.kiosk.state.StateMachine;
 import com.agrovision.kiosk.state.StateObserver;
 import com.agrovision.kiosk.ui.ad.AdActivity;
+import com.agrovision.kiosk.ui.ad.AdManager;
 import com.agrovision.kiosk.ui.result.ResultActivity;
+import com.agrovision.kiosk.app.UpdateManager;
 import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
+import com.agrovision.kiosk.util.AudioCacheManager;
 import com.agrovision.kiosk.util.LogUtils;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.FieldValue;
@@ -67,7 +69,6 @@ public final class HomeActivity extends AppCompatActivity
 
     private PreviewView cameraPreview;
     private BoundingBoxOverlay overlayView;
-    private EditText etManualSearch;
     private TextView tvDailyScanCount;
 
     // 🚀 Permission Launcher
@@ -89,15 +90,32 @@ public final class HomeActivity extends AppCompatActivity
     // Daily Scan Count
     private static final String PREFS_NAME = "scan_stats";
     private static final String KEY_SCAN_COUNT = "scan_count";
+    private static final String KEY_SUCCESSFUL_AD_COUNT = "successful_ad_count";
     private static final String KEY_LAST_DATE = "last_date";
 
     // 🚀 Idle Ad Timer
     private final Handler idleHandler = new Handler(Looper.getMainLooper());
-    private static final long IDLE_THRESHOLD_MS = 60_000; // 60 seconds
+    private static final long IDLE_THRESHOLD_MS = 30_000; // 30 seconds
     private final Runnable idleRunnable = () -> {
-        LogUtils.i("System idle for 60s. Transitioning to AdActivity.");
-        stateMachine.transition(StateEvent.IDLE_TIMEOUT);
-        startActivity(new Intent(this, AdActivity.class));
+        AppState currentState = stateMachine.getCurrentState();
+        LogUtils.i("System idle check triggered. Current state: " + currentState);
+        
+        // Only trigger idle ad if we are in a state that represents being "on home" or "ready/scanning"
+        // but no active match was found yet.
+        if (currentState == AppState.READY || currentState == AppState.SCANNING || currentState == AppState.IDLE) {
+            LogUtils.i("System idle threshold reached. Transitioning to AdActivity (IDLE mode).");
+            stateMachine.transition(StateEvent.IDLE_AD_TRIGGERED);
+            
+            Intent intent = new Intent(this, AdActivity.class);
+            intent.putExtra(AdActivity.EXTRA_AD_TYPE, AdActivity.AdType.IDLE);
+            intent.putExtra(AdActivity.EXTRA_AD_DURATION, 15000L); // 15 seconds for idle
+            startActivity(intent);
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+        } else {
+            LogUtils.d("Skipping idle ad: currently in state " + currentState);
+            // Re-post if we are still active but in a weird state?
+            resetIdleTimer();
+        }
     };
 
     @Override
@@ -113,8 +131,13 @@ public final class HomeActivity extends AppCompatActivity
         bindViews();
         initDependencies();
         // Camera starts in onResume
-        setupManualSearch();
         displayCurrentScanCount();
+
+        // 🚀 Initialize Ad Preloading
+        AdManager.getInstance(this);
+
+        // 🚀 STEP 3: Check for OTA updates
+        new UpdateManager(this).checkForUpdates();
     }
 
     @Override
@@ -137,6 +160,12 @@ public final class HomeActivity extends AppCompatActivity
         
         // 🚀 Unlock scanning when returning to Home
         isScanLocked = false;
+        
+        // 🚀 ENSURE DETECTION IS RESUMED after ads or result screens
+        cameraController.setDetectionEnabled(true);
+        
+        // 🚀 CRITICAL FIX: Reset the pipeline lock to prevent deadlocks from previous activities
+        cameraController.resetPipeline();
         
         // 🚀 RE-BIND CAMERA: Check permissions first
         checkCameraPermission();
@@ -162,7 +191,6 @@ public final class HomeActivity extends AppCompatActivity
     private void bindViews() {
         cameraPreview = findViewById(R.id.cameraPreview);
         overlayView = findViewById(R.id.overlayView);
-        etManualSearch = findViewById(R.id.etManualSearch);
         tvDailyScanCount = findViewById(R.id.tvDailyScanCount);
 
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
@@ -228,27 +256,19 @@ public final class HomeActivity extends AppCompatActivity
         );
     }
 
-    private void setupManualSearch() {
-        etManualSearch.setOnKeyListener((v, keyCode, event) -> {
-            if (event.getAction() == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_ENTER) {
-                LogUtils.i("Manual search requested");
-                resetIdleTimer();
-                stateMachine.transition(StateEvent.MANUAL_SELECTION);
-                etManualSearch.clearFocus();
-                return true;
-            }
-            return false;
-        });
-    }
-
     @Override
     public void onScanCompleted(List<String> normalizedTexts) {
-        Log.d("STATE_DEBUG", "onScanCompleted triggered in HomeActivity");
+        Log.d("PIPELINE_TRACE", "8. onScanCompleted triggered in HomeActivity. Items: " + (normalizedTexts != null ? normalizedTexts.size() : 0));
 
         // 🚀 STEP 1: Debounce and Lock Check
         long now = System.currentTimeMillis();
-        if (isScanLocked || (now - lastScanTime < 1500)) {
-            return; // Ignore duplicate scans
+        if (isScanLocked) {
+            Log.d("PIPELINE_TRACE", "8. Skipped: Scanner is locked");
+            return;
+        }
+        if (now - lastScanTime < 1500) {
+            Log.d("PIPELINE_TRACE", "8. Skipped: Debounce active (" + (now - lastScanTime) + "ms)");
+            return;
         }
 
         // 🚀 Reset idle timer because camera saw something or detection is active
@@ -256,6 +276,7 @@ public final class HomeActivity extends AppCompatActivity
 
         // If we were in IDLE state, transition to READY first (UI wake up)
         if (stateMachine.getCurrentState() == AppState.IDLE) {
+            Log.i("PIPELINE_TRACE", "8. Waking up from IDLE");
             stateMachine.transition(StateEvent.ACTIVITY_DETECTED);
         }
 
@@ -263,10 +284,12 @@ public final class HomeActivity extends AppCompatActivity
             // Re-check lock on UI thread to prevent race conditions during navigation
             if (isScanLocked) return;
 
+            Log.d("PIPELINE_TRACE", "9. Resolving medicines...");
             List<ScanResult> results = pipeline.resolve(normalizedTexts);
 
             if (results == null || results.isEmpty()) {
                 LogUtils.w("No scan results produced");
+                Log.d("PIPELINE_TRACE", "9. Resolve returned empty list");
                 return;
             }
 
@@ -274,7 +297,21 @@ public final class HomeActivity extends AppCompatActivity
             isScanLocked = true;
             lastScanTime = System.currentTimeMillis();
 
-            incrementScanCount();
+            // Prefetch audio immediately
+            AudioCacheManager cacheManager = AudioCacheManager.getInstance(this);
+            for (ScanResult res : results) {
+                if (res.medicineId != null && res.audioUrls != null) {
+                    for (int i = 0; i < res.audioUrls.size(); i++) {
+                        cacheManager.prefetchAudio(res.medicineId, i, res.audioUrls.get(i), null);
+                    }
+                }
+            }
+
+            Log.i("PIPELINE_TRACE", "10. Launching Result screen. Count: " + results.size());
+            
+            boolean hasKnown = results.stream().anyMatch(r -> r.resultType == ResultType.KNOWN);
+            incrementScanCount(hasKnown);
+            
             launchResultScreen(results);
         });
     }
@@ -287,10 +324,12 @@ public final class HomeActivity extends AppCompatActivity
         );
 
         startActivity(intent);
+        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
 
         boolean hasKnown = results.stream()
                 .anyMatch(r -> r.resultType == ResultType.KNOWN);
 
+        Log.d("PIPELINE_TRACE", "11. State transition. hasKnown: " + hasKnown);
         if (hasKnown) {
             stateMachine.transition(StateEvent.MATCH_FOUND);
         } else {
@@ -301,6 +340,17 @@ public final class HomeActivity extends AppCompatActivity
     @Override
     public void onStateChanged(AppState state) {
         LogUtils.i("HomeActivity observed state: " + state);
+        
+        // Reset idle timer whenever we enter an active state
+        if (state == AppState.SCANNING || state == AppState.RESULT_AUTO || 
+            state == AppState.RESULT_UNKNOWN || state == AppState.READY) {
+            runOnUiThread(this::resetIdleTimer);
+        }
+
+        // If we just finished an ad, make sure we are in READY state and resume scanning
+        if (state == AppState.READY) {
+            isScanLocked = false;
+        }
     }
 
     /* =========================================================
@@ -320,7 +370,7 @@ public final class HomeActivity extends AppCompatActivity
        DAILY SCAN COUNT LOGIC
        ========================================================= */
 
-    private void incrementScanCount() {
+    private void incrementScanCount(boolean isSuccessful) {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String today = getTodayDateString();
         String lastDate = prefs.getString(KEY_LAST_DATE, "");
@@ -333,10 +383,17 @@ public final class HomeActivity extends AppCompatActivity
             currentCount = 1;
         }
 
-        prefs.edit()
+        SharedPreferences.Editor editor = prefs.edit()
                 .putInt(KEY_SCAN_COUNT, currentCount)
-                .putString(KEY_LAST_DATE, today)
-                .apply();
+                .putString(KEY_LAST_DATE, today);
+
+        if (isSuccessful) {
+            int adCounter = prefs.getInt(KEY_SUCCESSFUL_AD_COUNT, 0) + 1;
+            Log.d("AD_DEBUG", "Successful scan count: " + adCounter);
+            editor.putInt(KEY_SUCCESSFUL_AD_COUNT, adCounter);
+        }
+
+        editor.apply();
 
         displayCurrentScanCount();
 
@@ -348,23 +405,27 @@ public final class HomeActivity extends AppCompatActivity
         String shopId = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
                 .getString("shop_mobile", "910000000000");
 
+        // Use top-level collection for easier dashboard aggregation
+        String docId = shopId + "_" + today;
         DocumentReference docRef = FirebaseFirestore.getInstance()
-                .collection("shops")
-                .document(shopId)
                 .collection("daily_scans")
-                .document(today);
+                .document(docId);
 
         docRef.get().addOnSuccessListener(document -> {
             if (document.exists()) {
                 Long current = document.getLong("scanCount");
                 long newCount = (current != null ? current : 0) + 1;
                 docRef.update("scanCount", newCount,
-                        "lastUpdated", FieldValue.serverTimestamp())
+                        "lastUpdated", FieldValue.serverTimestamp(),
+                        "shopId", shopId,
+                        "date", today)
                         .addOnFailureListener(e -> LogUtils.e("Firebase scan update failed", e));
             } else {
                 Map<String, Object> data = new HashMap<>();
                 data.put("scanCount", 1);
                 data.put("lastUpdated", FieldValue.serverTimestamp());
+                data.put("shopId", shopId);
+                data.put("date", today);
 
                 docRef.set(data)
                         .addOnFailureListener(e -> LogUtils.e("Firebase scan set failed", e));

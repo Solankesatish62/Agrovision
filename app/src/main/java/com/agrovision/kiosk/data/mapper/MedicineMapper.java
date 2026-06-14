@@ -9,76 +9,40 @@ import java.util.List;
 /**
  * MedicineMapper
  *
- * Translates between:
- * - Domain model (Medicine)
- * - Database entity (MedicineEntity)
- *
- * WHY THIS EXISTS:
- * - Domain models must remain clean (no Room, no CSV logic)
- * - Database entities must remain SQLite-friendly
- *
- * RULES:
- * - Stateless
- * - Pure functions only
- * - No Android framework usage
+ * Translates between Domain model (Medicine) and Database entity (MedicineEntity).
  */
 public final class MedicineMapper {
 
-    // Prevent instantiation
     private MedicineMapper() {}
 
-    /**
-     * Converts a domain Medicine into a database MedicineEntity.
-     *
-     * Used when persisting catalog data into Room.
-     */
     public static MedicineEntity toEntity(Medicine medicine) {
         if (medicine == null) return null;
 
         MedicineEntity entity = new MedicineEntity();
-
         entity.id = medicine.getId();
         entity.name = medicine.getName();
         entity.company = medicine.getCompany();
-
-        // Convert List<String> → CSV String
-        entity.supportedCrops =
-                StringListConverter.fromList(medicine.getSupportedCrops());
-
-        entity.supportedDiseases =
-                StringListConverter.fromList(medicine.getSupportedDiseases());
-
-        entity.imageUrls =
-                StringListConverter.fromList(medicine.getImageUrls());
-
-        entity.audioUrls =
-                StringListConverter.fromList(medicine.getAudioUrls());
-
+        entity.supportedCrops = StringListConverter.fromList(medicine.getSupportedCrops());
+        entity.supportedDiseases = StringListConverter.fromList(medicine.getSupportedDiseases());
+        entity.imageUrls = StringListConverter.fromList(medicine.getImageUrls());
+        entity.audioUrls = StringListConverter.fromList(medicine.getAudioUrls());
+        entity.searchKeywords = StringListConverter.fromList(medicine.getSearchKeywords());
         entity.usageInstructions = medicine.getUsageInstructions();
         entity.warnings = medicine.getWarnings();
+        entity.updatedAt = medicine.getUpdatedAt();
+        entity.isRemote = medicine.isRemote();
 
         return entity;
     }
 
-    /**
-     * Converts a database MedicineEntity back into a domain Medicine.
-     *
-     * Used when reading from Room into business logic.
-     */
     public static Medicine toDomain(MedicineEntity entity) {
         if (entity == null) return null;
 
-        List<String> crops =
-                StringListConverter.toList(entity.supportedCrops);
-
-        List<String> diseases =
-                StringListConverter.toList(entity.supportedDiseases);
-
-        List<String> images =
-                StringListConverter.toList(entity.imageUrls);
-
-        List<String> audios =
-                StringListConverter.toList(entity.audioUrls);
+        List<String> crops = StringListConverter.toList(entity.supportedCrops);
+        List<String> diseases = StringListConverter.toList(entity.supportedDiseases);
+        List<String> images = StringListConverter.toList(entity.imageUrls);
+        List<String> audios = StringListConverter.toList(entity.audioUrls);
+        List<String> keywords = StringListConverter.toList(entity.searchKeywords);
 
         return new Medicine(
                 entity.id,
@@ -88,8 +52,11 @@ public final class MedicineMapper {
                 diseases,
                 entity.usageInstructions,
                 entity.warnings,
+                keywords,
                 images,
-                audios
+                audios,
+                entity.updatedAt,
+                entity.isRemote
         );
     }
 }

@@ -48,6 +48,9 @@ public final class RecognitionPipelineOrchestrator {
      * 100% Offline Matching.
      */
     public List<ScanResult> resolve(List<String> normalizedTexts) {
+        Log.d("PIPELINE_TRACE", "9a. Orchestrator resolving " + (normalizedTexts != null ? normalizedTexts.size() : 0) + " items");
+        Log.i(TAG, "Search Space: Matching against " + (medicineCatalog != null ? medicineCatalog.size() : 0) + " total medicines.");
+
         List<ScanResult> results = new ArrayList<>();
 
         if (normalizedTexts == null || normalizedTexts.isEmpty()) {
@@ -57,6 +60,7 @@ public final class RecognitionPipelineOrchestrator {
         for (String text : normalizedTexts) {
             if (text == null || text.trim().isEmpty()) continue;
 
+            Log.d("PIPELINE_TRACE", "9b. Matching text: [" + text + "]");
             // Offline matching using local catalog
             MatchResult match = MedicineMatcher.match(text, medicineCatalog);
 

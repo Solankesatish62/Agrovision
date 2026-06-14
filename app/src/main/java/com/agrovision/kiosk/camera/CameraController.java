@@ -73,6 +73,7 @@ public final class CameraController {
 
     // 🚀 Multi-object detection fields
     private final AtomicBoolean isProcessingQueue = new AtomicBoolean(false);
+    private final AtomicBoolean isDetectionEnabled = new AtomicBoolean(true);
     private final Queue<DetectionResult> pendingDetections = new LinkedList<>();
     private final Set<String> processedResults = new HashSet<>();
     private Bitmap currentProcessingBitmap;
@@ -119,6 +120,39 @@ public final class CameraController {
         this.overlayView = overlayView;
     }
 
+    /**
+     * 🚀 ENABLE/DISABLE DETECTION
+     * Completely pauses the vision pipeline (YOLO + OCR).
+     */
+    public void setDetectionEnabled(boolean enabled) {
+        Log.i("PIPELINE_TRACE", "Detection " + (enabled ? "ENABLED" : "DISABLED"));
+        Log.d("SCAN_DEBUG", "Vision analyzer " + (enabled ? "RESUMED" : "PAUSED"));
+        isDetectionEnabled.set(enabled);
+        if (!enabled) {
+            resetPipeline();
+            // Clear overlay immediately when disabled
+            if (overlayView != null) {
+                overlayView.post(() -> overlayView.setBoxes(Collections.emptyList()));
+            }
+        }
+    }
+
+    /**
+     * 🚀 RESET PIPELINE
+     * Clears all pending detections and resets the processing lock.
+     * Should be called when scanning starts/resumes to prevent deadlocks.
+     */
+    public void resetPipeline() {
+        Log.i("PIPELINE_TRACE", "Resetting vision pipeline status");
+        isProcessingQueue.set(false);
+        pendingDetections.clear();
+        processedResults.clear();
+        if (currentProcessingBitmap != null) {
+            BitmapUtils.safeRecycle(currentProcessingBitmap);
+            currentProcessingBitmap = null;
+        }
+    }
+
     /* =========================================================
        FRAME PIPELINE
        ========================================================= */
@@ -127,7 +161,13 @@ public final class CameraController {
     private static final long PROCESS_THROTTLE_MS = 200;
 
     private void handleFrame(@NonNull ImageProxy image) {
+        if (!isDetectionEnabled.get()) {
+            image.close();
+            return;
+        }
+
         long now = System.currentTimeMillis();
+        Log.v("PIPELINE_TRACE", "1. Frame received");
 
         // 🚀 Step 2: Still throttle detection to avoid overworking CPU
         if (now - lastProcessTime < PROCESS_THROTTLE_MS) {
@@ -141,6 +181,7 @@ public final class CameraController {
 
             // 🚀 ALWAYS DETECT (Step 8: Detection continues always)
             List<DetectionResult> detections = yoloDetector.detect(bitmap);
+            Log.v("PIPELINE_TRACE", "2. YOLO Detection finished. Boxes: " + detections.size());
             
             // 🚀 ALWAYS UPDATE UI OVERLAY
             updateOverlay(detections, bitmap.getWidth(), bitmap.getHeight());
@@ -161,6 +202,11 @@ public final class CameraController {
                 }
 
                 if (!validDetections.isEmpty()) {
+                    Log.i("PIPELINE_TRACE", "3. Processing triggered. Valid Boxes: " + validDetections.size());
+                    
+                    // 🚀 STATE TRANSITION: Notify that an object is detected
+                    stateMachine.transition(StateEvent.OBJECT_DETECTED);
+
                     // STEP 4: LIMIT MAX OBJECTS
                     validDetections.sort((a, b) -> Float.compare(b.getConfidence(), a.getConfidence()));
                     int limit = Math.min(validDetections.size(), 3);
@@ -177,7 +223,11 @@ public final class CameraController {
                     Log.d("SCAN_DEBUG", "Boxes detected: " + validDetections.size() + ". Starting queue processing.");
                     processNext();
                     return; // Don't recycle bitmap, processNext will do it.
+                } else {
+                    Log.v("PIPELINE_TRACE", "3. No boxes passed confidence threshold (>0.5)");
                 }
+            } else {
+                Log.v("PIPELINE_TRACE", "3. Processing skipped: Queue is busy");
             }
 
             BitmapUtils.safeRecycle(bitmap);
@@ -192,6 +242,7 @@ public final class CameraController {
         
         if (detection == null) {
             // STEP 6: Queue empty -> return
+            Log.d("PIPELINE_TRACE", "Queue empty, resetting processing flag.");
             isProcessingQueue.set(false);
             if (currentProcessingBitmap != null) {
                 BitmapUtils.safeRecycle(currentProcessingBitmap);
@@ -200,12 +251,12 @@ public final class CameraController {
             return;
         }
 
+        Log.d("PIPELINE_TRACE", "4. Cropping box index: " + pendingDetections.size());
         Log.d("SCAN_DEBUG", "Processing next box in queue...");
 
         RectF normBox = detection.getBoundingBox();
         
         // 🚀 SCALE NORMALIZED -> PIXELS for cropping
-        // Since TfliteYoloModel now returns normalized coordinates [0, 1].
         float left = normBox.left * currentProcessingBitmap.getWidth();
         float top = normBox.top * currentProcessingBitmap.getHeight();
         float right = normBox.right * currentProcessingBitmap.getWidth();
@@ -222,12 +273,14 @@ public final class CameraController {
         );
 
         if (cropped != null) {
+            Log.d("PIPELINE_TRACE", "5. OCR Started");
             Bitmap ocrInput = BitmapUtils.scaleToWidth(cropped, 640);
             if (ocrInput != cropped) {
                 BitmapUtils.safeRecycle(cropped);
             }
 
             ocrProcessor.process(ocrInput, normalizedText -> {
+                Log.d("PIPELINE_TRACE", "6. OCR Finished. Text: [" + normalizedText + "]");
                 BitmapUtils.safeRecycle(ocrInput);
                 
                 if (normalizedText != null && !normalizedText.isEmpty()) {
@@ -235,17 +288,23 @@ public final class CameraController {
                     if (scanDebouncer.shouldProcess(normalizedText) && !processedResults.contains(normalizedText)) {
                         processedResults.add(normalizedText);
                         
+                        Log.i("PIPELINE_TRACE", "7. Notifying callback with result");
                         // STEP 9: UPDATE RESULT FLOW - Send one-by-one for immediate display
                         if (scanResultCallback != null) {
                             scanResultCallback.onScanCompleted(Collections.singletonList(normalizedText));
                         }
+                    } else {
+                        Log.d("PIPELINE_TRACE", "7. Result debounced or already processed");
                     }
+                } else {
+                    Log.d("PIPELINE_TRACE", "7. OCR returned empty/null");
                 }
                 
                 // STEP 6: After complete -> call processNext()
                 processNext();
             });
         } else {
+            Log.w("PIPELINE_TRACE", "5. Crop failed");
             processNext();
         }
     }

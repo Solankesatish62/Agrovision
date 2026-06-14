@@ -21,6 +21,7 @@ public final class StateRules {
         Map<StateEvent, AppState> ready = new EnumMap<>(StateEvent.class);
         ready.put(StateEvent.OBJECT_DETECTED, AppState.SCANNING);
         ready.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE);
+        ready.put(StateEvent.IDLE_AD_TRIGGERED, AppState.IDLE_AD);
         transitionTable.put(AppState.READY, ready);
 
         // ================= SCANNING =================
@@ -29,12 +30,14 @@ public final class StateRules {
         scanning.put(StateEvent.MATCH_NOT_FOUND, AppState.RESULT_UNKNOWN);
         scanning.put(StateEvent.OBJECT_REMOVED, AppState.READY);
         scanning.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
-        scanning.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE); // 🚀 Allow idle from scanning
+        scanning.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE); 
+        scanning.put(StateEvent.IDLE_AD_TRIGGERED, AppState.IDLE_AD); // 🚀 Allow idle ad from scanning
         transitionTable.put(AppState.SCANNING, scanning);
 
         // ================= RESULT_AUTO =================
         Map<StateEvent, AppState> resultAuto = new EnumMap<>(StateEvent.class);
         resultAuto.put(StateEvent.RESULT_TIMEOUT, AppState.READY);
+        resultAuto.put(StateEvent.SCAN_AD_TRIGGERED, AppState.SCAN_AD);
         resultAuto.put(StateEvent.NEW_SCAN_REQUESTED, AppState.SCANNING);
         resultAuto.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
         resultAuto.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE);
@@ -44,6 +47,7 @@ public final class StateRules {
         Map<StateEvent, AppState> resultManual = new EnumMap<>(StateEvent.class);
         resultManual.put(StateEvent.NEW_SCAN_REQUESTED, AppState.SCANNING);
         resultManual.put(StateEvent.RESULT_TIMEOUT, AppState.READY);
+        resultManual.put(StateEvent.SCAN_AD_TRIGGERED, AppState.SCAN_AD);
         resultManual.put(StateEvent.PAUSE_REQUESTED, AppState.RESULT_PAUSED);
         resultManual.put(StateEvent.IDLE_TIMEOUT, AppState.IDLE);
         transitionTable.put(AppState.RESULT_MANUAL_NAV, resultManual);
@@ -70,7 +74,23 @@ public final class StateRules {
         Map<StateEvent, AppState> idle = new EnumMap<>(StateEvent.class);
         idle.put(StateEvent.ACTIVITY_DETECTED, AppState.READY);
         idle.put(StateEvent.OBJECT_DETECTED, AppState.SCANNING);
+        idle.put(StateEvent.IDLE_AD_TRIGGERED, AppState.IDLE_AD);
         transitionTable.put(AppState.IDLE, idle);
+
+        // ================= SCAN_AD =================
+        Map<StateEvent, AppState> scanAd = new EnumMap<>(StateEvent.class);
+        scanAd.put(StateEvent.AD_COMPLETED, AppState.READY);
+        scanAd.put(StateEvent.ACTIVITY_DETECTED, AppState.READY);
+        transitionTable.put(AppState.SCAN_AD, scanAd);
+
+        // ================= IDLE_AD =================
+        Map<StateEvent, AppState> idleAd = new EnumMap<>(StateEvent.class);
+        idleAd.put(StateEvent.AD_COMPLETED, AppState.READY);
+        idleAd.put(StateEvent.ACTIVITY_DETECTED, AppState.READY);
+        // 🚀 CRITICAL: Removed OBJECT_DETECTED -> SCANNING transition here.
+        // We only wake up from Idle Ads on real touch or confirmed medicine detection (OCR).
+        // This prevents "jumpy" camera noise from closing the advertisement prematurely.
+        transitionTable.put(AppState.IDLE_AD, idleAd);
     }
 
     public AppState calculateNextState(AppState currentState, StateEvent event) {

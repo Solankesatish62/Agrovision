@@ -60,4 +60,10 @@ public interface MedicineDao {
      */
     @Query("DELETE FROM medicines")
     void clearAll();
+
+    /**
+     * Delete medicines by ID.
+     */
+    @Query("DELETE FROM medicines WHERE id IN (:ids)")
+    void deleteByIds(List<String> ids);
 }

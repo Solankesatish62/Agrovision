@@ -2,24 +2,23 @@ package com.agrovision.kiosk.app;
 
 import android.app.Application;
 
+import android.app.Activity;
+import android.os.Bundle;
+
+import com.agrovision.kiosk.sync.KioskStatusManager;
 import com.agrovision.kiosk.util.LogUtils;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 /**
  * MainApplication
  *
  * SINGLE ENTRY POINT of the kiosk app.
- *
- * RESPONSIBILITIES:
- * - Install global crash handler (via AppInitializer)
- * - Initialize core systems in correct order
- * - Enforce immersive kiosk defaults
- *
- * RULES:
- * - No UI
- * - No Camera
- * - No ML
  */
 public final class MainApplication extends Application {
+
+    private int activityCount = 0;
 
     @Override
     public void onCreate() {
@@ -27,16 +26,37 @@ public final class MainApplication extends Application {
 
         LogUtils.i("MainApplication onCreate");
 
-        /* =========================================================
-           SYSTEM BOOTSTRAP
-           ========================================================= */
-        // Corrected from .init() to .initialize() to match AppInitializer definition
         AppInitializer.initialize(this);
-
-        /* =========================================================
-           IMMERSIVE DEFAULTS
-           ========================================================= */
         enforceImmersiveDefaults();
+        setupActivityTracking();
+    }
+
+    private void setupActivityTracking() {
+        registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
+            @Override
+            public void onActivityStarted(@NonNull Activity activity) {
+                activityCount++;
+                if (activityCount == 1) {
+                    // App entered foreground
+                    KioskStatusManager.getInstance(MainApplication.this).start();
+                }
+            }
+
+            @Override
+            public void onActivityStopped(@NonNull Activity activity) {
+                activityCount--;
+                if (activityCount == 0) {
+                    // App entered background or closed
+                    KioskStatusManager.getInstance(MainApplication.this).stop();
+                }
+            }
+
+            @Override public void onActivityCreated(@NonNull Activity activity, @Nullable Bundle savedInstanceState) {}
+            @Override public void onActivityResumed(@NonNull Activity activity) {}
+            @Override public void onActivityPaused(@NonNull Activity activity) {}
+            @Override public void onActivitySaveInstanceState(@NonNull Activity activity, @NonNull Bundle outState) {}
+            @Override public void onActivityDestroyed(@NonNull Activity activity) {}
+        });
     }
 
     /**

@@ -71,6 +71,7 @@ public final class AppInitializer {
         IoExecutor.submit(() -> {
             EventTracker.getInstance(appContext).initAsync();
             scheduleBackgroundSync(appContext);
+            scheduleHeartbeat(appContext);
             LogUtils.i("AppInitializer: background services ready");
         });
 
@@ -99,5 +100,28 @@ public final class AppInitializer {
                 syncRequest
         );
         LogUtils.i("AppInitializer: Background sync scheduled");
+    }
+
+    /**
+     * Schedules periodic kiosk heartbeat to monitor online/offline status.
+     * Interval: 15 minutes (WorkManager minimum).
+     */
+    private static void scheduleHeartbeat(Context context) {
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build();
+
+        PeriodicWorkRequest heartbeatRequest = new PeriodicWorkRequest.Builder(
+                com.agrovision.kiosk.sync.HeartbeatWorker.class,
+                15, TimeUnit.MINUTES)
+                .setConstraints(constraints)
+                .build();
+
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                "KioskHeartbeat",
+                ExistingPeriodicWorkPolicy.KEEP,
+                heartbeatRequest
+        );
+        LogUtils.i("AppInitializer: Heartbeat scheduled");
     }
 }

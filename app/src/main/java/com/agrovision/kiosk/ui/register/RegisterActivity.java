@@ -11,10 +11,12 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.agrovision.kiosk.R;
+import com.agrovision.kiosk.BuildConfig;
 import com.agrovision.kiosk.ui.home.HomeActivity;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.SetOptions;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -64,21 +66,40 @@ public final class RegisterActivity extends AppCompatActivity {
 
         showLoading(true);
 
-        // 1. Prepare data for Firebase
-        Map<String, Object> shopData = new HashMap<>();
-        shopData.put("fullName", name);
-        shopData.put("shopName", shop);
-        shopData.put("mobile", mobile);
-        shopData.put("registeredAt", System.currentTimeMillis());
-        shopData.put("isActive", true);
+        long now = System.currentTimeMillis();
 
-        // 2. Save to Firestore (Collection: shops)
-        FirebaseFirestore.getInstance().collection("shops")
-                .document(mobile)
-                .set(shopData)
+        // 1. Prepare data for shops collection
+        Map<String, Object> shopData = new HashMap<>();
+        shopData.put("ownerName", name);
+        shopData.put("shopName", shop);
+        shopData.put("phoneNumber", mobile);
+        shopData.put("onboardingDate", now);
+        shopData.put("status", "ACTIVE");
+        shopData.put("appVersion", BuildConfig.VERSION_NAME);
+
+        // 2. Prepare data for kiosks collection
+        Map<String, Object> kioskData = new HashMap<>();
+        kioskData.put("shopName", shop);
+        kioskData.put("lastActiveTimestamp", now);
+        kioskData.put("appVersion", BuildConfig.VERSION_NAME);
+        kioskData.put("status", "ONLINE");
+        kioskData.put("deviceId", android.os.Build.MODEL);
+
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+
+        // Save to shops
+        db.collection("shops").document(mobile).set(shopData)
                 .addOnSuccessListener(aVoid -> {
-                    saveLocally(name, shop, mobile);
-                    navigateToHome();
+                    // Save to kiosks
+                    db.collection("kiosks").document(mobile).set(kioskData, SetOptions.merge())
+                            .addOnSuccessListener(aVoid2 -> {
+                                saveLocally(name, shop, mobile);
+                                navigateToHome();
+                            })
+                            .addOnFailureListener(e -> {
+                                showLoading(false);
+                                Toast.makeText(this, "Kiosk sync failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                            });
                 })
                 .addOnFailureListener(e -> {
                     showLoading(false);

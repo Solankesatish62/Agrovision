@@ -80,4 +80,23 @@ public class MedicineEntity {
      * Stored as CSV string via StringListConverter.
      */
     public String audioUrls;
+
+    /**
+     * Search Keywords for matching.
+     *
+     * Stored as CSV string via StringListConverter.
+     */
+    public String searchKeywords;
+
+    /**
+     * Timestamp of last update.
+     */
+    public long updatedAt;
+
+    /**
+     * 🚀 SOURCE TRACKING:
+     * - false: Loaded from local medicines.json
+     * - true: Synced from Firestore 'approved_medicines'
+     */
+    public boolean isRemote;
 }
