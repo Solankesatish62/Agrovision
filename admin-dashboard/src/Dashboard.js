@@ -1,13 +1,35 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { db } from './firebase';
-import { collection, onSnapshot, query, where, orderBy, limit, doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
-import * as XLSX from 'xlsx';
+import { collection, onSnapshot, query, where, orderBy, doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+
+// Shared Components
+import NavButton from './components/Shared/NavButton';
+import Card from './components/Shared/Card';
+import { COLORS, SHADOWS } from './components/Shared/Styles';
+
+// Feature Components
+import MonitoringTable from './components/Monitoring/MonitoringTable';
+import OnboardingTable from './components/Shops/OnboardingTable';
+import AppUpdatesView from './components/Updates/AppUpdatesView';
+import MedicineTable from './components/Medicines/MedicineTable';
+import MedicineForm from './components/Medicines/MedicineForm';
+import BulkMedicineImporter from './components/Medicines/BulkMedicineImporter';
+import IncompleteTable from './components/Medicines/IncompleteTable';
+import AiMedicineWizard from './components/Medicines/AiMedicineWizard';
+import DatabaseManager from './components/Database/DatabaseManager';
+
+// Firebase Storage
+import { storage } from './firebase';
+import { ref, listAll, getDownloadURL, getMetadata } from 'firebase/storage';
+
+// Utils
+import { formatTimestamp } from './utils/formatters';
 
 const Dashboard = () => {
   const [activeView, setActiveView] = useState('monitoring');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [kiosks, setKiosks] = useState([]);
   const [shops, setShops] = useState([]);
-  const [history, setHistory] = useState([]);
   const [medicines, setMedicines] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [scans, setScans] = useState({});
@@ -16,25 +38,18 @@ const Dashboard = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [editingMedicine, setEditingMedicine] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [incompleteSearchTerm, setIncompleteSearchTerm] = useState('');
 
-  const formatTimestamp = (ts) => {
-    if (!ts) return 0;
-    if (ts.toMillis) return ts.toMillis();
-    return ts;
-  };
+  // 🚀 Storage Assets Data (Cached in Dashboard to prevent re-loading)
+  const [storageFiles, setStorageFiles] = useState({ images: [], audio: [], advertisements: [] });
+  const [isStorageLoading, setIsStorageLoading] = useState(false);
+  const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
 
   // 🚀 Monitoring Data
   useEffect(() => {
     const unsubscribe = onSnapshot(query(collection(db, 'kiosks')), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setKiosks(data);
-      const now = Date.now();
-      const online = data.filter(k => {
-        const lastActive = formatTimestamp(k.lastActiveTimestamp);
-        const isRecent = (now - lastActive) < 90 * 1000; // 90 seconds window
-        return isRecent && k.status === 'ONLINE';
-      }).length;
-      setStats(prev => ({ ...prev, total: data.length, online: online, offline: data.length - online }));
     });
     return () => unsubscribe();
   }, []);
@@ -54,15 +69,6 @@ const Dashboard = () => {
     const unsubscribe = onSnapshot(collection(db, 'approved_medicines'), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMedicines(data);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 🚀 History Data (Last 500 scans)
-  useEffect(() => {
-    const q = query(collection(db, 'successful_scans'), orderBy('timestamp', 'desc'), limit(500));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setHistory(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
     return () => unsubscribe();
   }, []);
@@ -96,6 +102,53 @@ const Dashboard = () => {
     fetchUpdateConfig();
   }, []);
 
+  // 🚀 Fetch Storage Assets Once
+  useEffect(() => {
+    const viewsThatNeedStorage = ['database', 'medicines', 'ai-wizard', 'incomplete'];
+    if (viewsThatNeedStorage.includes(activeView) && !hasLoadedStorage) {
+      const fetchStorageFiles = async () => {
+        setIsStorageLoading(true);
+        const folders = [
+            { id: 'images', path: 'medicine-images' },
+            { id: 'audio', path: 'medicine-audio' },
+            { id: 'advertisements', path: 'advertisements' }
+        ];
+
+        try {
+            const results = {};
+            for (const folder of folders) {
+                try {
+                    const storageRef = ref(storage, folder.path);
+                    const listResult = await listAll(storageRef);
+                    const filePromises = listResult.items.map(async (item) => {
+                        try {
+                            const url = await getDownloadURL(item);
+                            const metadata = await getMetadata(item);
+                            return {
+                                name: item.name,
+                                fullPath: item.fullPath,
+                                url,
+                                size: metadata.size,
+                                timeCreated: metadata.timeCreated,
+                                contentType: metadata.contentType
+                            };
+                        } catch (e) { return null; }
+                    });
+                    const resolvedFiles = await Promise.all(filePromises);
+                    results[folder.id] = resolvedFiles.filter(f => f !== null);
+                } catch (e) { results[folder.id] = []; }
+            }
+            setStorageFiles(results);
+            setHasLoadedStorage(true);
+        } catch (error) {
+            console.error("Error fetching storage:", error);
+        }
+        setIsStorageLoading(false);
+      };
+      fetchStorageFiles();
+    }
+  }, [activeView, hasLoadedStorage]);
+
   const handleUpdateSave = async () => {
     setIsSaving(true);
     try {
@@ -113,26 +166,59 @@ const Dashboard = () => {
     try {
       const newMedicineId = formData.medicineName.trim();
       const docRef = doc(db, 'approved_medicines', newMedicineId);
-
       const now = serverTimestamp();
+
       const dataToSave = {
-        ...formData,
+        name: formData.medicineName,
+        company: formData.company || '',
+        searchKeywords: formData.ocrKeywords.filter(k => k && k.trim() !== ''),
+        barcodePrefixes: formData.barcodePrefixes.filter(p => p && p.trim() !== ''),
+        crop: formData.crop || '',
+        disease: formData.disease || '',
+        usage: formData.usage || '',
+        marathiInfo: formData.marathiInfo || '',
+        imageUrls: formData.imageUrls.filter(u => u && u.trim() !== ''),
+        audioUrls: formData.audioUrls || '',
         updatedAt: now,
         createdAt: editingMedicine ? (editingMedicine.createdAt || now) : now
       };
 
-      // If renaming medicine, delete the old document ID to prevent duplicates
       if (editingMedicine && editingMedicine.id !== newMedicineId) {
         await deleteDoc(doc(db, 'approved_medicines', editingMedicine.id));
       }
 
       await setDoc(docRef, dataToSave);
-      alert('Medicine saved successfully!');
       setIsFormOpen(false);
       setEditingMedicine(null);
     } catch (error) {
       console.error("Error saving medicine:", error);
-      alert('Failed to save medicine.');
+      alert('Failed to save medicine: ' + error.message);
+    }
+    setIsSaving(false);
+  };
+
+  const handleSaveBulkMedicines = async (medicinesList) => {
+    setIsSaving(true);
+    try {
+      const now = serverTimestamp();
+      const promises = medicinesList.map(m => {
+        const id = m.medicineName.trim();
+        const docRef = doc(db, 'approved_medicines', id);
+        const data = {
+            ...m,
+            name: m.medicineName,
+            searchKeywords: m.ocrKeywords,
+            updatedAt: now,
+            createdAt: now
+        };
+        delete data.medicineName; // Match the storage format
+        delete data.ocrKeywords; // Match the storage format
+        return setDoc(docRef, data);
+      });
+      await Promise.all(promises);
+    } catch (error) {
+      console.error("Error saving bulk medicines:", error);
+      throw error;
     }
     setIsSaving(false);
   };
@@ -141,10 +227,20 @@ const Dashboard = () => {
     if (window.confirm(`Are you sure you want to delete "${medicineId}"?`)) {
       try {
         await deleteDoc(doc(db, 'approved_medicines', medicineId));
-        alert('Medicine deleted successfully.');
       } catch (error) {
         console.error("Error deleting medicine:", error);
         alert('Failed to delete medicine.');
+      }
+    }
+  };
+
+  const handleDeleteShop = async (shopId) => {
+    if (window.confirm(`Are you sure you want to delete this retail partner? This action cannot be undone.`)) {
+      try {
+        await deleteDoc(doc(db, 'shops', shopId));
+      } catch (error) {
+        console.error("Error deleting shop:", error);
+        alert('Failed to delete shop.');
       }
     }
   };
@@ -159,440 +255,276 @@ const Dashboard = () => {
     setIsFormOpen(true);
   };
 
-  const exportToExcel = () => {
-    const worksheet = XLSX.utils.json_to_sheet(history.map(item => ({
-      'Shop Name': item.shopName,
-      'Shop ID': item.shopId,
-      'Medicine Name': item.medicineName,
-      'Medicine ID': item.medicineId,
-      'Date': item.date,
-      'Time': item.timestamp ? new Date(formatTimestamp(item.timestamp)).toLocaleString() : 'N/A'
-    })));
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Medicine Scans");
-    XLSX.writeFile(workbook, `AgroVision_Scan_History_${new Date().toLocaleDateString()}.xlsx`);
-  };
+  const incompleteMedicines = useMemo(() => {
+    const list = medicines.filter(m => {
+        const hasName = m.name || m.medicineName;
+        const hasMarathi = m.marathiInfo || m.warnings;
+        const hasKeywords = (m.searchKeywords && m.searchKeywords.length > 0) || (m.ocrKeywords && m.ocrKeywords.length > 0);
+        const hasImages = (m.imageUrls && m.imageUrls.length > 0) || (m.imageurls && m.imageurls.length > 0);
+        const hasCrop = m.crop || (m.supportedCrops && m.supportedCrops.length > 0);
+        const hasDisease = m.disease || (m.supportedDiseases && m.supportedDiseases.length > 0);
+        const hasCompany = m.company && m.company !== 'Unknown';
+        const hasAudio = m.audioUrls || m.audiourls;
+
+        return !hasName || !hasMarathi || !hasKeywords || !hasImages || !hasCrop || !hasDisease || !hasCompany || !hasAudio;
+    }).sort((a, b) => (a.name || a.medicineName || "").localeCompare(b.name || b.medicineName || ""));
+
+    const term = incompleteSearchTerm.toLowerCase().trim();
+    if (!term) return list;
+
+    return list.filter(m => (m.name || m.medicineName || "").toLowerCase().includes(term));
+  }, [medicines, incompleteSearchTerm]);
 
   const filteredMedicines = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
+    const sortedAll = [...medicines].sort((a, b) =>
+      (a.name || a.medicineName || "").toLowerCase().localeCompare((b.name || b.medicineName || "").toLowerCase())
+    );
 
-    // Sort by name by default
-    const sortedAll = [...medicines].sort((a, b) => (a.medicineName || "").localeCompare(b.medicineName || ""));
     if (!term) return sortedAll;
 
-    const matches = medicines.filter(m => {
+    return medicines.filter(m => {
       const searchData = [
-        m.medicineName,
-        m.id,
-        m.company,
-        m.marathiInfo,
-        Array.isArray(m.crop) ? m.crop.join(' ') : m.crop,
-        Array.isArray(m.disease) ? m.disease.join(' ') : m.disease,
-        Array.isArray(m.ocrKeywords) ? m.ocrKeywords.join(' ') : m.ocrKeywords
-      ].map(field => (field || "").toLowerCase()).join(" ");
-
+        m.name, m.medicineName, m.id, m.company, m.marathiInfo, m.crop, m.disease
+      ].join(" ").toLowerCase();
       return searchData.includes(term);
-    });
-
-    // 🚀 SMART RELEVANCE SORTING
-    return matches.sort((a, b) => {
-        const aName = (a.medicineName || "").toLowerCase();
-        const bName = (b.medicineName || "").toLowerCase();
-
-        // 1. Exact name match gets top priority
-        if (aName === term) return -1;
-        if (bName === term) return 1;
-
-        // 2. Name starting with term gets second priority
-        const aStarts = aName.startsWith(term);
-        const bStarts = bName.startsWith(term);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
-
-        // 3. Fallback to alphabetical
+    }).sort((a, b) => {
+        const aName = (a.name || a.medicineName || "").toLowerCase();
+        const bName = (b.name || b.medicineName || "").toLowerCase();
+        if (aName.startsWith(term) && !bName.startsWith(term)) return -1;
+        if (!aName.startsWith(term) && bName.startsWith(term)) return 1;
         return aName.localeCompare(bName);
     });
   }, [medicines, searchTerm]);
 
-  return (
-    <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif', backgroundColor: '#f4f7f6', minHeight: '100vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1 style={{ color: '#1a5f7a', margin: 0 }}>AgroVision Command Center</h1>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <NavButton active={activeView === 'monitoring'} onClick={() => setActiveView('monitoring')} label="Monitoring" />
-          <NavButton active={activeView === 'onboarding'} onClick={() => setActiveView('onboarding')} label="Shops" />
-          <NavButton active={activeView === 'medicines'} onClick={() => setActiveView('medicines')} label="Medicine Catalog" />
-          <NavButton active={activeView === 'history'} onClick={() => setActiveView('history')} label="Medicine History" />
-          <NavButton active={activeView === 'updates'} onClick={() => setActiveView('updates')} label="App Updates" />
-        </div>
-      </div>
+  const visibleKiosks = useMemo(() => {
+    const shopIds = new Set(shops.map(s => s.id));
+    return kiosks.filter(k => shopIds.has(k.id));
+  }, [kiosks, shops]);
 
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '30px', flexWrap: 'wrap' }}>
-        <Card title="Online Kiosks" value={stats.online} color="#27ae60" />
-        <Card title="Medicines in DB" value={medicines.length} color="#e67e22" />
-        <Card title="Total Shops" value={stats.totalShops} color="#8e44ad" />
-      </div>
+  const derivedStats = useMemo(() => {
+    const now = Date.now();
+    const online = visibleKiosks.filter(k => {
+      const lastActive = formatTimestamp(k.lastActiveTimestamp);
+      const isRecent = (now - lastActive) < 90 * 1000;
+      return isRecent && k.status === 'ONLINE';
+    }).length;
 
-      {activeView === 'monitoring' && <MonitoringTable kiosks={kiosks} scans={scans} formatTimestamp={formatTimestamp} />}
-      {activeView === 'onboarding' && <OnboardingTable shops={shops} formatTimestamp={formatTimestamp} />}
-      {activeView === 'medicines' && (
-        isFormOpen ? (
-          <MedicineForm
-            medicine={editingMedicine}
-            onSave={handleSaveMedicine}
-            onCancel={() => {
-              setIsFormOpen(false);
-              setEditingMedicine(null);
-            }}
-          />
-        ) : (
-          <MedicineTable
-            medicines={filteredMedicines}
-            searchTerm={searchTerm}
-            setSearchTerm={setSearchTerm}
-            onAdd={openAddForm}
-            onEdit={openEditForm}
-            onDelete={handleDeleteMedicine}
-          />
-        )
-      )}
-      {activeView === 'history' && <HistoryTable history={history} onExport={exportToExcel} formatTimestamp={formatTimestamp} />}
-      {activeView === 'updates' && (
-        <AppUpdatesView
-          config={updateConfig}
-          setConfig={setUpdateConfig}
-          onSave={handleUpdateSave}
-          isSaving={isSaving}
-        />
-      )}
-    </div>
-  );
-};
-
-const AppUpdatesView = ({ config, setConfig, onSave, isSaving }) => (
-  <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', maxWidth: '600px' }}>
-    <h2 style={{ marginTop: 0, color: '#1a5f7a' }}>🚀 Manage App Updates</h2>
-    <p style={{ color: '#666', marginBottom: '25px' }}>This configuration controls the OTA (Over-The-Air) update message shown to all kiosks.</p>
-
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div>
-        <label style={labelStyle}>Latest Version Code</label>
-        <input
-          type="number"
-          style={inputStyle}
-          value={config.latestVersionCode}
-          onChange={(e) => setConfig({ ...config, latestVersionCode: parseInt(e.target.value) || 0 })}
-          placeholder="e.g. 2"
-        />
-        <small style={{ color: '#7f8c8d' }}>Must be higher than the current app's version code (1) to trigger update.</small>
-      </div>
-
-      <div>
-        <label style={labelStyle}>Latest Version Name</label>
-        <input
-          type="text"
-          style={inputStyle}
-          value={config.latestVersionName}
-          onChange={(e) => setConfig({ ...config, latestVersionName: e.target.value })}
-          placeholder="e.g. 1.1-stable"
-        />
-      </div>
-
-      <div>
-        <label style={labelStyle}>APK Download URL</label>
-        <input
-          type="text"
-          style={inputStyle}
-          value={config.apkUrl}
-          onChange={(e) => setConfig({ ...config, apkUrl: e.target.value })}
-          placeholder="https://firebasestorage.googleapis.com/..."
-        />
-        <small style={{ color: '#e74c3c' }}>Security Note: URL must contain 'firebasestorage' or 'agrovision'.</small>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <input
-          type="checkbox"
-          id="forceUpdate"
-          checked={config.forceUpdate}
-          onChange={(e) => setConfig({ ...config, forceUpdate: e.target.checked })}
-        />
-        <label htmlFor="forceUpdate" style={{ fontWeight: 'bold', cursor: 'pointer' }}>Force Update (User cannot skip)</label>
-      </div>
-
-      <button
-        onClick={onSave}
-        disabled={isSaving}
-        style={{
-          ...exportBtnStyle,
-          backgroundColor: isSaving ? '#95a5a6' : '#1a5f7a',
-          padding: '15px',
-          fontSize: '16px',
-          marginTop: '10px'
-        }}
-      >
-        {isSaving ? 'Saving Configuration...' : '💾 Save & Push Update to Kiosks'}
-      </button>
-    </div>
-  </div>
-);
-
-const labelStyle = { display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#2c3e50' };
-const inputStyle = { width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', boxSizing: 'border-box' };
-
-const MedicineForm = ({ medicine, onSave, onCancel }) => {
-  const padArray = (arr, minLength) => {
-    const result = Array.isArray(arr) ? [...arr] : [];
-    while (result.length < minLength) result.push('');
-    return result;
-  };
-
-  const [formData, setFormData] = useState(medicine ? {
-    ...medicine,
-    ocrKeywords: padArray(medicine.ocrKeywords, 3),
-    imageUrls: padArray(medicine.imageUrls, 4)
-  } : {
-    medicineName: '',
-    company: '',
-    crop: '',
-    disease: '',
-    usage: '',
-    marathiInfo: '',
-    ocrKeywords: ['', '', ''],
-    imageUrls: ['', '', '', ''],
-    audioUrls: ''
-  });
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
-  };
-
-  const handleArrayChange = (index, value, field) => {
-    const newArray = [...formData[field]];
-    newArray[index] = value;
-    setFormData({ ...formData, [field]: newArray });
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!formData.medicineName.trim()) {
-      alert("Medicine Name is required!");
-      return;
-    }
-    if (!formData.marathiInfo.trim()) {
-      alert("Marathi Information is required!");
-      return;
-    }
-    const filteredKeywords = formData.ocrKeywords.filter(k => k && k.trim() !== '');
-    if (filteredKeywords.length === 0) {
-        alert("At least one OCR keyword is required!");
-        return;
-    }
-    const filteredImages = formData.imageUrls.filter(u => u && u.trim() !== '');
-    if (filteredImages.length === 0) {
-        alert("At least one Image URL is required!");
-        return;
-    }
-
-    const finalData = {
-        ...formData,
-        ocrKeywords: filteredKeywords,
-        imageUrls: filteredImages
+    return {
+      total: visibleKiosks.length,
+      online: online,
+      offline: visibleKiosks.length - online,
+      totalScans: stats.totalScans,
+      totalShops: stats.totalShops
     };
-    onSave(finalData);
-  };
+  }, [visibleKiosks, stats.totalScans, stats.totalShops]);
+
+  const activeViewContent = useMemo(() => {
+    const viewMap = {
+      'monitoring': <MonitoringTable kiosks={visibleKiosks} scans={scans} formatTimestamp={formatTimestamp} />,
+      'onboarding': <OnboardingTable shops={shops} formatTimestamp={formatTimestamp} onDelete={handleDeleteShop} />,
+      'database': <DatabaseManager files={storageFiles} loading={isStorageLoading} />,
+      'medicines': <MedicineTable medicines={filteredMedicines} searchTerm={searchTerm} setSearchTerm={setSearchTerm} onAdd={openAddForm} onEdit={openEditForm} onDelete={handleDeleteMedicine} onBulk={() => setActiveView('bulk-import')} />,
+      'ai-wizard': <AiMedicineWizard />,
+      'bulk-import': <BulkMedicineImporter existingMedicines={medicines} onSaveAll={handleSaveBulkMedicines} onCancel={() => setActiveView('medicines')} />,
+      'incomplete': <IncompleteTable medicines={incompleteMedicines} searchTerm={incompleteSearchTerm} setSearchTerm={setIncompleteSearchTerm} onEdit={openEditForm} />,
+      'updates': <AppUpdatesView config={updateConfig} setConfig={setUpdateConfig} onSave={handleUpdateSave} isSaving={isSaving} />
+    };
+    return viewMap[activeView] || viewMap['monitoring'];
+  }, [activeView, visibleKiosks, scans, shops, storageFiles, isStorageLoading, filteredMedicines, searchTerm, incompleteMedicines, incompleteSearchTerm, updateConfig, isSaving]);
+
+  const renderActiveView = () => (
+    <div key={activeView} style={{ animation: 'fadeIn 0.3s ease-out' }}>
+      {activeViewContent}
+    </div>
+  );
 
   return (
-    <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', maxWidth: '800px', margin: '0 auto' }}>
-      <h2 style={{ marginTop: 0, color: '#1a5f7a' }}>{medicine ? 'Edit Medicine' : 'Add New Medicine'}</h2>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-            <div>
-                <label style={labelStyle}>Medicine Name (ID)</label>
-                <input name="medicineName" value={formData.medicineName} onChange={handleChange} style={inputStyle} required disabled={!!medicine} />
-            </div>
-            <div>
-                <label style={labelStyle}>Company</label>
-                <input name="company" value={formData.company} onChange={handleChange} style={inputStyle} />
-            </div>
-            <div>
-                <label style={labelStyle}>Crop</label>
-                <input name="crop" value={formData.crop} onChange={handleChange} style={inputStyle} placeholder="e.g. Cotton, Soyabean" />
-            </div>
-            <div>
-                <label style={labelStyle}>Disease</label>
-                <input name="disease" value={formData.disease} onChange={handleChange} style={inputStyle} placeholder="e.g. Aphids, Wilt" />
-            </div>
+    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: COLORS.background }}>
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .nav-button:hover {
+            background-color: #f1f5f9 !important;
+            color: #1a5f7a !important;
+            transform: translateX(4px);
+        }
+        .nav-button:active {
+            transform: scale(0.98);
+        }
+        .nav-button.active:hover {
+            background-color: ${COLORS.primary} !important;
+            color: white !important;
+            transform: none;
+        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; borderRadius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+      `}</style>
+
+      {/* Sidebar Navigation */}
+      <div style={{
+        width: isSidebarCollapsed ? '80px' : '280px',
+        backgroundColor: COLORS.white,
+        borderRight: `1px solid ${COLORS.border}`,
+        padding: isSidebarCollapsed ? '32px 12px' : '32px 20px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '40px',
+        position: 'sticky',
+        top: 0,
+        height: '100vh',
+        transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        zIndex: 100
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: isSidebarCollapsed ? 'center' : 'space-between', padding: '0 12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{
+                width: '40px',
+                height: '40px',
+                backgroundColor: COLORS.primary,
+                borderRadius: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'white',
+                fontWeight: 'bold',
+                fontSize: '20px',
+                minWidth: '40px'
+            }}>A</div>
+            {!isSidebarCollapsed && <h1 style={{ color: COLORS.primary, margin: 0, fontSize: '20px', fontWeight: '800', letterSpacing: '-0.5px' }}>AgroVision</h1>}
+          </div>
+          {!isSidebarCollapsed && (
+            <button
+              onClick={() => setIsSidebarCollapsed(true)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: COLORS.textMuted }}
+            >
+              ◀
+            </button>
+          )}
         </div>
 
-        <div>
-            <label style={labelStyle}>Usage Instructions</label>
-            <textarea name="usage" value={formData.usage} onChange={handleChange} style={{...inputStyle, height: '80px'}} />
+        {isSidebarCollapsed && (
+            <button
+                onClick={() => setIsSidebarCollapsed(false)}
+                style={{
+                    position: 'absolute',
+                    right: '-15px',
+                    top: '40px',
+                    width: '30px',
+                    height: '30px',
+                    borderRadius: '50%',
+                    backgroundColor: COLORS.white,
+                    border: `1px solid ${COLORS.border}`,
+                    cursor: 'pointer',
+                    boxShadow: SHADOWS.sm,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '12px',
+                    color: COLORS.primary
+                }}
+            >
+                ▶
+            </button>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {!isSidebarCollapsed && <p style={{ fontSize: '12px', fontWeight: '700', color: COLORS.textMuted, padding: '0 12px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' }}>Menu</p>}
+          <NavButton active={activeView === 'monitoring'} onClick={() => setActiveView('monitoring')} label="Monitoring" icon="📊" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'onboarding'} onClick={() => setActiveView('onboarding')} label="Retail Partners" icon="🏪" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'medicines'} onClick={() => setActiveView('medicines')} label="Medicine Catalog" icon="🌿" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'ai-wizard'} onClick={() => setActiveView('ai-wizard')} label="AI Wizard" icon="✨" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'database'} onClick={() => setActiveView('database')} label="Database" icon="🗄️" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'incomplete'} onClick={() => setActiveView('incomplete')} label="Data Health" icon="🩺" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'updates'} onClick={() => setActiveView('updates')} label="App Releases" icon="🚀" isCollapsed={isSidebarCollapsed} />
         </div>
 
-        <div>
-            <label style={labelStyle}>Marathi Information</label>
-            <textarea name="marathiInfo" value={formData.marathiInfo} onChange={handleChange} style={{...inputStyle, height: '80px'}} required />
-        </div>
-
-        <div>
-            <label style={labelStyle}>OCR Keywords (Min 3 suggested)</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
-                {formData.ocrKeywords.map((kw, i) => (
-                    <input key={i} value={kw} onChange={(e) => handleArrayChange(i, e.target.value, 'ocrKeywords')} style={inputStyle} placeholder={`Keyword ${i+1}`} />
-                ))}
+        {!isSidebarCollapsed && (
+            <div style={{ marginTop: 'auto', padding: '20px', backgroundColor: '#f8fafc', borderRadius: '16px', border: `1px solid ${COLORS.border}` }}>
+                <p style={{ margin: 0, fontSize: '13px', color: COLORS.textMain, fontWeight: '600' }}>Admin Dashboard</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: COLORS.textMuted }}>v2.4.0 Stable</p>
             </div>
+        )}
+      </div>
+
+      {/* Main Content Area */}
+      <div style={{ flex: 1, padding: '40px 48px', overflowY: 'auto' }}>
+        <header style={{ marginBottom: '40px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '28px', fontWeight: '800', color: COLORS.textMain, letterSpacing: '-0.5px' }}>
+              {activeView === 'monitoring' && 'Kiosk Monitoring'}
+              {activeView === 'onboarding' && 'Retail Partners'}
+              {activeView === 'medicines' && 'Medicine Catalog'}
+              {activeView === 'bulk-import' && 'Bulk Medicine Import'}
+              {activeView === 'database' && 'Storage Assets Manager'}
+              {activeView === 'ai-wizard' && 'AI Medicine Assistant'}
+              {activeView === 'incomplete' && 'Data Health Check'}
+              {activeView === 'updates' && 'Application Releases'}
+            </h2>
+            <p style={{ margin: '8px 0 0 0', color: COLORS.textMuted, fontSize: '15px' }}>
+              Welcome back! Here's what's happening across your network today.
+            </p>
+          </div>
+          <div style={{ color: COLORS.textMuted, fontSize: '14px', fontWeight: '500' }}>
+            📅 {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </div>
+        </header>
+
+        {/* Global Stats */}
+        <div style={{ display: 'flex', gap: '24px', marginBottom: '40px' }}>
+          <Card title="Online Status" value={`${derivedStats.online} / ${derivedStats.total}`} color={COLORS.secondary} icon="📶" />
+          <Card title="Total Partners" value={derivedStats.totalShops} color={COLORS.primary} icon="🏢" />
+          <Card title="Catalog Size" value={medicines.length} color={COLORS.accent} icon="📦" />
+          <Card title="Health Issues" value={incompleteMedicines.length} color={COLORS.danger} icon="🚨" />
         </div>
 
-        <div>
-            <label style={labelStyle}>Image URLs (Min 4 suggested)</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                {formData.imageUrls.map((url, i) => (
-                    <input key={i} value={url} onChange={(e) => handleArrayChange(i, e.target.value, 'imageUrls')} style={inputStyle} placeholder={`Image URL ${i+1}`} />
-                ))}
-            </div>
-        </div>
+        {/* Active View Rendering */}
+        <main style={{
+          backgroundColor: COLORS.white,
+          borderRadius: '24px',
+          boxShadow: SHADOWS.lg,
+          border: `1px solid ${COLORS.border}`,
+          padding: '32px',
+          minHeight: '400px',
+          position: 'relative',
+          overflow: 'hidden'
+        }}>
+          {renderActiveView()}
+        </main>
 
-        <div>
-            <label style={labelStyle}>Audio URL</label>
-            <input name="audioUrls" value={formData.audioUrls} onChange={handleChange} style={inputStyle} placeholder="https://..." />
-        </div>
-
-        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' }}>
-            <button type="button" onClick={onCancel} style={{ ...exportBtnStyle, backgroundColor: '#95a5a6' }}>Cancel</button>
-            <button type="submit" style={exportBtnStyle}>Save Medicine</button>
-        </div>
-      </form>
+        {isFormOpen && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'rgba(15, 23, 42, 0.8)',
+            zIndex: 2000,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: '20px',
+            backdropFilter: 'blur(8px)'
+          }}>
+              <MedicineForm
+                  medicine={editingMedicine}
+                  storageFiles={storageFiles}
+                  onSave={handleSaveMedicine}
+                  onCancel={() => {
+                      setIsFormOpen(false);
+                      setEditingMedicine(null);
+                  }}
+              />
+          </div>
+        )}
+      </div>
     </div>
   );
 };
-
-const MedicineTable = ({ medicines, searchTerm, setSearchTerm, onAdd, onEdit, onDelete }) => (
-  <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-      <h2 style={{ margin: 0 }}>Approved Medicine Catalog</h2>
-      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <input
-            type="text"
-            placeholder="Search by Name, Company or Keyword..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ddd', width: '300px' }}
-          />
-          <button onClick={onAdd} style={{...exportBtnStyle, backgroundColor: '#1a5f7a'}}>+ Add New Medicine</button>
-      </div>
-    </div>
-    <div style={{ overflowX: 'auto' }}>
-      <TableLayout headers={['Medicine Name', 'Company', 'Crops', 'Diseases', 'Last Updated', 'Actions']}>
-        {medicines.map(m => (
-          <tr key={m.id} style={trStyle}>
-            <td style={tdBoldStyle}>
-                <div>{m.medicineName || m.id}</div>
-                <small style={{color: '#7f8c8d', fontWeight: 'normal'}}>{m.id}</small>
-            </td>
-            <td style={tdStyle}>{m.company || '—'}</td>
-            <td style={tdStyle}>
-                <div style={{maxWidth: '200px', fontSize: '12px'}}>{Array.isArray(m.crop) ? m.crop.join(', ') : m.crop || '—'}</div>
-            </td>
-            <td style={tdStyle}>
-                <div style={{maxWidth: '200px', fontSize: '12px'}}>{Array.isArray(m.disease) ? m.disease.join(', ') : m.disease || '—'}</div>
-            </td>
-            <td style={tdStyle}>
-                <div style={{fontSize: '11px', color: '#7f8c8d'}}>
-                    {m.updatedAt ? new Date(m.updatedAt.toMillis ? m.updatedAt.toMillis() : m.updatedAt).toLocaleDateString() : '—'}
-                </div>
-            </td>
-            <td style={tdStyle}>
-                <div style={{ display: 'flex', gap: '5px' }}>
-                    <button onClick={() => onEdit(m)} style={{ padding: '6px 12px', backgroundColor: '#3498db', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Edit</button>
-                    <button onClick={() => onDelete(m.id)} style={{ padding: '6px 12px', backgroundColor: '#e74c3c', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Delete</button>
-                </div>
-            </td>
-          </tr>
-        ))}
-      </TableLayout>
-    </div>
-  </div>
-);
-
-const MonitoringTable = ({ kiosks, scans, formatTimestamp }) => (
-  <TableLayout headers={['Kiosk ID', 'Shop Name', 'Today\'s Scans', 'Last Active', 'Version', 'Status']}>
-    {kiosks.map(k => {
-      const lastActiveMillis = formatTimestamp(k.lastActiveTimestamp);
-      const isOnline = lastActiveMillis > 0 && (Date.now() - lastActiveMillis) < 90 * 1000 && k.status === 'ONLINE';
-      return (
-        <tr key={k.id} style={trStyle}>
-          <td style={tdStyle}>{k.id}</td>
-          <td style={tdBoldStyle}>{k.shopName}</td>
-          <td style={{ ...tdStyle, color: '#27ae60', fontWeight: 'bold' }}>{scans[k.id] || 0}</td>
-          <td style={tdStyle}>{lastActiveMillis > 0 ? new Date(lastActiveMillis).toLocaleString() : "Never"}</td>
-          <td style={tdStyle}><span style={{...badgeStyle, backgroundColor: '#f1f2f6', color: '#2f3542'}}>{k.appVersion || '1.0'}</span></td>
-          <td style={{ ...tdStyle, color: isOnline ? 'green' : 'red', fontWeight: 'bold' }}>{isOnline ? '● ONLINE' : '○ OFFLINE'}</td>
-        </tr>
-      );
-    })}
-  </TableLayout>
-);
-
-const OnboardingTable = ({ shops, formatTimestamp }) => (
-  <TableLayout headers={['Phone Number', 'Owner', 'Shop Name', 'Registered Date', 'Status']}>
-    {shops.map(s => (
-      <tr key={s.id} style={trStyle}>
-        <td style={tdStyle}>{s.phoneNumber}</td>
-        <td style={tdBoldStyle}>{s.ownerName}</td>
-        <td style={tdStyle}>{s.shopName}</td>
-        <td style={tdStyle}>{s.onboardingDate ? new Date(formatTimestamp(s.onboardingDate)).toLocaleString() : 'N/A'}</td>
-        <td style={tdStyle}><span style={badgeStyle}>{s.status}</span></td>
-      </tr>
-    ))}
-  </TableLayout>
-);
-
-const HistoryTable = ({ history, onExport, formatTimestamp }) => (
-  <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-      <h2 style={{ margin: 0 }}>Detailed Medicine Scan Logs</h2>
-      <button onClick={onExport} style={exportBtnStyle}>📊 Download Excel Report</button>
-    </div>
-    <TableLayout headers={['Date/Time', 'Shop Name', 'Medicine Scanned', 'Medicine ID']}>
-      {history.map(item => (
-        <tr key={item.id} style={trStyle}>
-          <td style={tdStyle}>{item.timestamp ? new Date(formatTimestamp(item.timestamp)).toLocaleString() : 'N/A'}</td>
-          <td style={tdBoldStyle}>{item.shopName}</td>
-          <td style={{ ...tdStyle, color: '#2980b9', fontWeight: 'bold' }}>{item.medicineName}</td>
-          <td style={tdStyle}>{item.medicineId}</td>
-        </tr>
-      ))}
-    </TableLayout>
-  </div>
-);
-
-const TableLayout = ({ headers, children }) => (
-  <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', borderRadius: '12px', overflow: 'hidden' }}>
-    <thead style={{ backgroundColor: '#f8f9fa' }}>
-      <tr>{headers.map(h => <th key={h} style={thStyle}>{h}</th>)}</tr>
-    </thead>
-    <tbody>{children}</tbody>
-  </table>
-);
-
-const NavButton = ({ active, onClick, label }) => (
-  <button onClick={onClick} style={{ padding: '10px 20px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 'bold', backgroundColor: active ? '#1a5f7a' : '#ddd', color: active ? 'white' : '#555' }}>{label}</button>
-);
-
-const Card = ({ title, value, color }) => (
-  <div style={{ padding: '20px', borderRadius: '12px', minWidth: '200px', backgroundColor: 'white', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-    <h3 style={{ margin: '0 0 10px 0', color: '#7f8c8d', fontSize: '14px' }}>{title}</h3>
-    <p style={{ fontSize: '32px', margin: 0, fontWeight: 'bold', color }}>{value}</p>
-  </div>
-);
-
-const thStyle = { padding: '15px', color: '#444', borderBottom: '2px solid #eee', textAlign: 'left' };
-const tdStyle = { padding: '15px', borderBottom: '1px solid #eee' };
-const tdBoldStyle = { ...tdStyle, fontWeight: 'bold' };
-const trStyle = { transition: 'background 0.2s' };
-const badgeStyle = { padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e1f5fe', color: '#01579b', fontSize: '12px', fontWeight: 'bold' };
-const exportBtnStyle = { padding: '10px 20px', backgroundColor: '#27ae60', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' };
 
 export default Dashboard;

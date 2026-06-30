@@ -22,11 +22,14 @@ public final class MedicineMapper {
         entity.id = medicine.getId();
         entity.name = medicine.getName();
         entity.company = medicine.getCompany();
+        entity.cibNo = medicine.getCibNo();
+        entity.chemicalName = medicine.getChemicalName();
         entity.supportedCrops = StringListConverter.fromList(medicine.getSupportedCrops());
         entity.supportedDiseases = StringListConverter.fromList(medicine.getSupportedDiseases());
         entity.imageUrls = StringListConverter.fromList(medicine.getImageUrls());
         entity.audioUrls = StringListConverter.fromList(medicine.getAudioUrls());
         entity.searchKeywords = StringListConverter.fromList(medicine.getSearchKeywords());
+        entity.barcodePrefixes = StringListConverter.fromList(medicine.getBarcodePrefixes());
         entity.usageInstructions = medicine.getUsageInstructions();
         entity.warnings = medicine.getWarnings();
         entity.updatedAt = medicine.getUpdatedAt();
@@ -43,16 +46,20 @@ public final class MedicineMapper {
         List<String> images = StringListConverter.toList(entity.imageUrls);
         List<String> audios = StringListConverter.toList(entity.audioUrls);
         List<String> keywords = StringListConverter.toList(entity.searchKeywords);
+        List<String> prefixes = StringListConverter.toList(entity.barcodePrefixes);
 
         return new Medicine(
                 entity.id,
                 entity.name,
                 entity.company,
+                entity.cibNo,
+                entity.chemicalName,
                 crops,
                 diseases,
                 entity.usageInstructions,
                 entity.warnings,
                 keywords,
+                prefixes,
                 images,
                 audios,
                 entity.updatedAt,

@@ -15,11 +15,14 @@ public final class Medicine {
     private final String id;
     private final String name;
     private final String company;
+    private final String cibNo;
+    private final String chemicalName;
     private final List<String> supportedCrops;
     private final List<String> supportedDiseases;
     private final String usageInstructions;
     private final String warnings;
     private final List<String> searchKeywords;
+    private final List<String> barcodePrefixes;
     private final List<String> imageUrls;
     private final List<String> audioUrls;
     private final long updatedAt;
@@ -34,22 +37,45 @@ public final class Medicine {
             String usageInstructions,
             String warnings,
             List<String> searchKeywords,
+            List<String> barcodePrefixes,
             List<String> imageUrls,
             List<String> audioUrls,
             long updatedAt
     ) {
-        this(id, name, company, supportedCrops, supportedDiseases, usageInstructions, warnings, searchKeywords, imageUrls, audioUrls, updatedAt, false);
+        this(id, name, company, null, null, supportedCrops, supportedDiseases, usageInstructions, warnings, searchKeywords, barcodePrefixes, imageUrls, audioUrls, updatedAt, false);
     }
 
     public Medicine(
             String id,
             String name,
             String company,
+            String cibNo,
+            String chemicalName,
             List<String> supportedCrops,
             List<String> supportedDiseases,
             String usageInstructions,
             String warnings,
             List<String> searchKeywords,
+            List<String> barcodePrefixes,
+            List<String> imageUrls,
+            List<String> audioUrls,
+            long updatedAt
+    ) {
+        this(id, name, company, cibNo, chemicalName, supportedCrops, supportedDiseases, usageInstructions, warnings, searchKeywords, barcodePrefixes, imageUrls, audioUrls, updatedAt, false);
+    }
+
+    public Medicine(
+            String id,
+            String name,
+            String company,
+            String cibNo,
+            String chemicalName,
+            List<String> supportedCrops,
+            List<String> supportedDiseases,
+            String usageInstructions,
+            String warnings,
+            List<String> searchKeywords,
+            List<String> barcodePrefixes,
             List<String> imageUrls,
             List<String> audioUrls,
             long updatedAt,
@@ -58,9 +84,12 @@ public final class Medicine {
         this.id = id;
         this.name = name;
         this.company = company;
+        this.cibNo = cibNo;
+        this.chemicalName = chemicalName;
         this.supportedCrops = supportedCrops == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(supportedCrops));
         this.supportedDiseases = supportedDiseases == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(supportedDiseases));
         this.searchKeywords = searchKeywords == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(searchKeywords));
+        this.barcodePrefixes = barcodePrefixes == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(barcodePrefixes));
         this.usageInstructions = usageInstructions;
         this.warnings = warnings;
         this.imageUrls = imageUrls == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(imageUrls));
@@ -72,11 +101,14 @@ public final class Medicine {
     public String getId() { return id; }
     public String getName() { return name; }
     public String getCompany() { return company; }
+    public String getCibNo() { return cibNo; }
+    public String getChemicalName() { return chemicalName; }
     public List<String> getSupportedCrops() { return supportedCrops; }
     public List<String> getSupportedDiseases() { return supportedDiseases; }
     public String getUsageInstructions() { return usageInstructions; }
     public String getWarnings() { return warnings; }
     public List<String> getSearchKeywords() { return searchKeywords; }
+    public List<String> getBarcodePrefixes() { return barcodePrefixes; }
     public List<String> getImageUrls() { return imageUrls; }
     public List<String> getAudioUrls() { return audioUrls; }
     public long getUpdatedAt() { return updatedAt; }

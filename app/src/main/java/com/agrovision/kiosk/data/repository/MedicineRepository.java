@@ -199,6 +199,51 @@ public final class MedicineRepository {
         return cachedCatalog;
     }
 
+    /**
+     * Finds a medicine by its barcode prefix in the local cache.
+     */
+    public Medicine getByBarcodePrefix(String prefix) {
+        if (prefix == null || prefix.isEmpty()) return null;
+        for (Medicine m : cachedCatalog) {
+            for (String p : m.getBarcodePrefixes()) {
+                if (prefix.startsWith(p) || p.startsWith(prefix)) {
+                    return m;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Learning Logic: Update a medicine's barcode prefixes.
+     * Updates both Local Room DB and Cloud Firestore.
+     */
+    public void addBarcodePrefix(String medicineId, String newPrefix) {
+        IoExecutor.submit(() -> {
+            MedicineEntity entity = medicineDao.getById(medicineId);
+            if (entity != null) {
+                List<String> prefixes = new ArrayList<>(com.agrovision.kiosk.data.database.converter.StringListConverter.toList(entity.barcodePrefixes));
+                if (!prefixes.contains(newPrefix)) {
+                    prefixes.add(newPrefix);
+                    String updatedCsv = com.agrovision.kiosk.data.database.converter.StringListConverter.fromList(prefixes);
+                    
+                    // 1. Update Local Room
+                    entity.barcodePrefixes = updatedCsv;
+                    medicineDao.insertAll(Collections.singletonList(entity));
+                    
+                    // 2. Update Cloud Firestore
+                    firestore.collection("approved_medicines").document(medicineId)
+                            .update("barcodePrefixes", prefixes)
+                            .addOnSuccessListener(aVoid -> Log.i(TAG, "Cloud: Learned prefix " + newPrefix + " for " + medicineId))
+                            .addOnFailureListener(e -> Log.e(TAG, "Cloud: Failed to sync learned prefix", e));
+
+                    // Refresh cache
+                    loadCatalogFromRoom();
+                }
+            }
+        });
+    }
+
     public void logUnknownDetection(String rawOcrText, String imagePath) {
         long timestamp = System.currentTimeMillis();
         IoExecutor.submit(() -> {
@@ -214,6 +259,25 @@ public final class MedicineRepository {
                     .addOnSuccessListener(documentReference -> {
                         Log.i(TAG, "Cloud: Logged unknown medicine for review.");
                     });
+        });
+    }
+
+    /**
+     * Log unknown QR discovery for market intelligence.
+     */
+    public void logUnknownDiscovery(String scrapedName, String rawCode) {
+        long timestamp = System.currentTimeMillis();
+        IoExecutor.submit(() -> {
+            Map<String, Object> data = new HashMap<>();
+            data.put("scrapedName", scrapedName);
+            data.put("rawCode", rawCode);
+            data.put("timestamp", timestamp);
+            data.put("shopId", appContext.getSharedPreferences("kiosk_settings", Context.MODE_PRIVATE)
+                    .getString("shop_mobile", "910000000000"));
+
+            firestore.collection("unknown_discovery")
+                    .add(data)
+                    .addOnSuccessListener(ref -> Log.i(TAG, "Cloud: Logged market discovery: " + scrapedName));
         });
     }
 
@@ -245,15 +309,20 @@ public final class MedicineRepository {
             keywords.add(name);
         }
 
+        List<String> prefixes = jsonArrayToList(obj.optJSONArray("barcodePrefixes"));
+
         return new Medicine(
                 id,
                 name,
                 obj.optString("company", "Unknown"),
+                obj.optString("cibNo"),
+                obj.optString("chemicalName"),
                 jsonArrayToList(obj.optJSONArray("supportedCrops")),
                 jsonArrayToList(obj.optJSONArray("supportedDiseases")),
                 obj.optString("usageInstructions"),
                 obj.optString("warnings"),
                 keywords,
+                prefixes,
                 jsonArrayToList(obj.optJSONArray("imageUrls")),
                 jsonArrayToList(obj.optJSONArray("audioUrls")),
                 obj.optLong("updatedAt", 0)
@@ -262,51 +331,54 @@ public final class MedicineRepository {
 
     private Medicine docToMedicine(DocumentSnapshot doc) {
         try {
-            // 🚀 UNIFIED MAPPING (Firebase -> Domain)
-            // Firebase uses 'medicineName', Domain uses 'name'
-            String name = doc.getString("medicineName");
-            if (name == null) name = doc.getString("name");
+            // 🚀 STANDARDIZED MAPPING (Firebase -> Domain)
+            // Priority 1: name (Standard), Priority 2: medicineName (Legacy)
+            String name = doc.getString("name");
+            if (name == null) name = doc.getString("medicineName");
 
             if (name == null || name.isEmpty()) {
-                Log.w(TAG, "Firebase: Skipping document " + doc.getId() + " - missing 'name' or 'medicineName'");
+                Log.w(TAG, "Firebase: Skipping document " + doc.getId() + " - missing 'name'");
                 return null;
             }
 
-            // Firebase uses 'ocrKeywords' or 'ocrText', Domain uses 'searchKeywords'
-            List<String> keywords = safeGetList(doc, "ocrKeywords");
+            // Priority 1: searchKeywords (Standard), Priority 2: ocrKeywords (Legacy)
+            List<String> keywords = safeGetList(doc, "searchKeywords");
+            if (keywords.isEmpty()) keywords = safeGetList(doc, "ocrKeywords");
             if (keywords.isEmpty()) keywords = safeGetList(doc, "ocrText");
-            if (keywords.isEmpty()) keywords = safeGetList(doc, "searchKeywords");
             if (keywords.isEmpty()) keywords = safeGetList(doc, "keywords");
 
-            // Validation: Ensure we have at least one keyword for matching
             if (keywords.isEmpty()) {
                 keywords = new ArrayList<>();
                 keywords.add(name);
             }
 
-            // Firebase uses 'imageurls' (lowercase), Domain uses 'imageUrls'
-            List<String> images = safeGetList(doc, "imageurls");
-            if (images.isEmpty()) images = safeGetList(doc, "imageUrls");
+            // Barcode Prefixes
+            List<String> prefixes = safeGetList(doc, "barcodePrefixes");
 
-            // Firebase uses 'audiourls' (lowercase), Domain uses 'audioUrls'
-            List<String> audios = safeGetList(doc, "audiourls");
-            if (audios.isEmpty()) audios = safeGetList(doc, "audioUrls");
+            // Priority 1: imageUrls (Standard), Priority 2: imageurls (Legacy)
+            List<String> images = safeGetList(doc, "imageUrls");
+            if (images.isEmpty()) images = safeGetList(doc, "imageurls");
 
-            // Firebase uses 'crop'/'disease' (singular strings), Domain uses 'supportedCrops'/'supportedDiseases' (lists)
-            List<String> crops = safeGetList(doc, "crop");
-            if (crops.isEmpty()) crops = safeGetList(doc, "supportedCrops");
+            // Priority 1: audioUrls (Standard), Priority 2: audiourls (Legacy)
+            List<String> audios = safeGetList(doc, "audioUrls");
+            if (audios.isEmpty()) audios = safeGetList(doc, "audiourls");
 
-            List<String> diseases = safeGetList(doc, "disease");
-            if (diseases.isEmpty()) diseases = safeGetList(doc, "supportedDiseases");
+            // Priority 1: supportedCrops (Standard), Priority 2: crop (Legacy)
+            List<String> crops = safeGetList(doc, "supportedCrops");
+            if (crops.isEmpty()) crops = safeGetList(doc, "crop");
 
-            // Firebase uses 'marathiInfo' or 'warnings'
+            // Priority 1: supportedDiseases (Standard), Priority 2: disease (Legacy)
+            List<String> diseases = safeGetList(doc, "supportedDiseases");
+            if (diseases.isEmpty()) diseases = safeGetList(doc, "disease");
+
+            // Priority 1: marathiInfo (Standard), Priority 2: warnings (Legacy)
             String warnings = doc.getString("marathiInfo");
             if (warnings == null || warnings.isEmpty()) warnings = doc.getString("warnings");
 
-            // Firebase uses 'usage', 'usageInstructions' or common typo 'usuage'
-            String usage = doc.getString("usage");
-            if (usage == null || usage.isEmpty()) usage = doc.getString("usageInstructions");
-            if (usage == null || usage.isEmpty()) usage = doc.getString("usuage"); // 🚀 Support common typo seen in Firestore
+            // Priority 1: usageInstructions (Standard), Priority 2: usage (Legacy)
+            String usage = doc.getString("usageInstructions");
+            if (usage == null || usage.isEmpty()) usage = doc.getString("usage");
+            if (usage == null || usage.isEmpty()) usage = doc.getString("usuage"); // Legacy typo support
 
             // Handle updatedAt: support both Long (ms) and Firebase Timestamp
             long updatedAt = 0;
@@ -320,24 +392,27 @@ public final class MedicineRepository {
             }
 
             Medicine m = new Medicine(
-                    doc.getId(), // Use Firestore Document ID as the unique Medicine ID
+                    doc.getId(), 
                     name,
                     doc.getString("company") != null ? doc.getString("company") : "Unknown",
+                    doc.getString("cibNo"),
+                    doc.getString("chemicalName"),
                     crops,
                     diseases,
                     usage,
                     warnings,
                     keywords,
+                    prefixes,
                     images,
                     audios,
                     updatedAt,
-                    true // 🚀 isRemote = true
+                    true 
             );
 
-            Log.i(TAG, "Firebase Parsed -> Name: " + m.getName() + " Usage: " + m.getUsageInstructions() + " Warnings: " + m.getWarnings());
+            Log.i(TAG, "Standardized Parsed -> Name: " + m.getName());
             return m;
         } catch (Exception e) {
-            Log.e(TAG, "Firebase: Failed to unify document " + doc.getId(), e);
+            Log.e(TAG, "Firebase: Failed to parse standardized document " + doc.getId(), e);
             return null;
         }
     }

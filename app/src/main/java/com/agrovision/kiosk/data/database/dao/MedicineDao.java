@@ -66,4 +66,12 @@ public interface MedicineDao {
      */
     @Query("DELETE FROM medicines WHERE id IN (:ids)")
     void deleteByIds(List<String> ids);
+
+    /**
+     * Fetch a medicine by its barcode prefix.
+     *
+     * Uses LIKE to search within the CSV string of prefixes.
+     */
+    @Query("SELECT * FROM medicines WHERE barcodePrefixes LIKE '%' || :pattern || '%' LIMIT 1")
+    MedicineEntity getByBarcodePrefix(String pattern);
 }

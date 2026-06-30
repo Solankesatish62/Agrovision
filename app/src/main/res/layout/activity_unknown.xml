@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF"
+    android:padding="24dp">
+
+    <com.google.android.material.card.MaterialCardView
+        android:layout_width="600dp"
+        android:layout_height="wrap_content"
+        app:cardBackgroundColor="#FEEBEB"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:strokeColor="#F9D7D7"
+        app:strokeWidth="2dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="48dp"
+            android:gravity="center_horizontal">
+
+            <ImageView
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:src="@android:drawable/ic_dialog_alert"
+                app:tint="#D32F2F"
+                android:layout_marginBottom="24dp"/>
+
+            <TextView
+                android:id="@+id/tvUnknownTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="अपरिचित औषध (Unknown Medicine)"
+                android:textColor="#B71C1C"
+                android:textSize="36sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="16dp"
+                android:gravity="center"/>
+
+            <TextView
+                android:id="@+id/tvUnknownMessage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="या औषधाची माहिती आमच्या कॅटलॉगमध्ये उपलब्ध नाही."
+                android:textColor="#7A2E2E"
+                android:textSize="24sp"
+                android:gravity="center"
+                android:lineSpacingExtra="8dp"
+                android:layout_marginBottom="32dp"/>
+
+            <TextView
+                android:id="@+id/tvScrapedName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                tools:text="Found: Brand-X"
+                android:textColor="#000000"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="48dp"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnBackToScan"
+                android:layout_width="wrap_content"
+                android:layout_height="80dp"
+                android:text="परत जा (Back to Scan)"
+                android:textSize="20sp"
+                app:cornerRadius="20dp"
+                android:paddingHorizontal="32dp"/>
+
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

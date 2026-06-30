@@ -50,12 +50,10 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
             MappedByteBuffer model = loadModel(context.getApplicationContext(), assetPath);
 
             Interpreter.Options options = new Interpreter.Options();
-            // 🚀 SPEED FIX: Use 4 CPU threads + XNNPACK for high-speed inference
+            // 🚀 SPEED FIX: Use 4 CPU threads + XNNPACK + NNAPI for high-speed inference
             options.setNumThreads(4);
-            
-            // Re-enabling standard performance optimizations
-            options.setUseXNNPACK(true); 
-            options.setUseNNAPI(false); // Still force CPU for stability, but with XNNPACK speed
+            options.setUseXNNPACK(true);
+            options.setUseNNAPI(true); // Enable Hardware Acceleration for Kiosk CPU/GPU
 
             interpreter = new Interpreter(model, options);
 

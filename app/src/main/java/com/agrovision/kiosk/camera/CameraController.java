@@ -8,7 +8,10 @@ import android.view.Display;
 import android.view.Surface;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.OptIn;
 import androidx.camera.core.*;
+import androidx.camera.core.resolutionselector.ResolutionSelector;
+import androidx.camera.core.resolutionselector.ResolutionStrategy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
@@ -153,16 +156,67 @@ public final class CameraController {
         }
     }
 
+    /**
+     * Creates a CameraSelector based on configuration.
+     * Falls back to any available camera if the configured lens facing is not available.
+     */
+    @androidx.annotation.OptIn(markerClass = androidx.camera.core.ExperimentalLensFacing.class)
+    private CameraSelector createCameraSelector() {
+        if (cameraProvider == null) return CameraSelector.DEFAULT_BACK_CAMERA;
+
+        // 1. Try Configured Lens (usually EXTERNAL for kiosks)
+        try {
+            CameraSelector selector = new CameraSelector.Builder()
+                    .requireLensFacing(CameraConfig.LENS_FACING)
+                    .build();
+            if (cameraProvider.hasCamera(selector)) {
+                return selector;
+            }
+        } catch (Exception ignored) {}
+
+        // 2. Try BACK camera
+        try {
+            if (cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                return CameraSelector.DEFAULT_BACK_CAMERA;
+            }
+        } catch (Exception ignored) {}
+
+        // 3. Try FRONT camera
+        try {
+            if (cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                return CameraSelector.DEFAULT_FRONT_CAMERA;
+            }
+        } catch (Exception ignored) {}
+
+        // 4. EMULATOR/KIOSK FALLBACK: Just take the first available camera
+        try {
+            List<CameraInfo> available = cameraProvider.getAvailableCameraInfos();
+            if (!available.isEmpty()) {
+                return available.get(0).getCameraSelector();
+            }
+        } catch (Exception ignored) {}
+
+        return CameraSelector.DEFAULT_BACK_CAMERA;
+    }
+
     /* =========================================================
        FRAME PIPELINE
        ========================================================= */
 
     private long lastProcessTime = 0;
-    private static final long PROCESS_THROTTLE_MS = 200;
+    private static final long PROCESS_THROTTLE_MS = 100; // 🚀 Reduced from 200ms to 100ms for "instant" feel
 
     private void handleFrame(@NonNull ImageProxy image) {
         if (!isDetectionEnabled.get()) {
             image.close();
+            return;
+        }
+
+        // 🚀 PERFORMANCE OPTIMIZATION:
+        // If the pipeline is busy processing previous detections (OCR/Matching),
+        // we skip detection on new frames to free up CPU resources.
+        // This prevents the "stuttering" or "stuck" feel on lower-end kiosk hardware.
+        if (isProcessingQueue.get()) {
             return;
         }
 
@@ -182,7 +236,7 @@ public final class CameraController {
             // 🚀 ALWAYS DETECT (Step 8: Detection continues always)
             List<DetectionResult> detections = yoloDetector.detect(bitmap);
             Log.v("PIPELINE_TRACE", "2. YOLO Detection finished. Boxes: " + detections.size());
-            
+
             // 🚀 ALWAYS UPDATE UI OVERLAY
             updateOverlay(detections, bitmap.getWidth(), bitmap.getHeight());
 
@@ -192,7 +246,8 @@ public final class CameraController {
             }
 
             // 🚀 START PROCESSING QUEUE IF IDLE (Step 6: Create Processing Queue)
-            if (!isProcessingQueue.get()) {
+            // Use compareAndSet to prevent race conditions when multiple frames are processed
+            if (isProcessingQueue.compareAndSet(false, true)) {
                 List<DetectionResult> validDetections = new ArrayList<>();
                 for (DetectionResult det : detections) {
                     // STEP 3: confidence > 0.5
@@ -203,7 +258,7 @@ public final class CameraController {
 
                 if (!validDetections.isEmpty()) {
                     Log.i("PIPELINE_TRACE", "3. Processing triggered. Valid Boxes: " + validDetections.size());
-                    
+
                     // 🚀 STATE TRANSITION: Notify that an object is detected
                     stateMachine.transition(StateEvent.OBJECT_DETECTED);
 
@@ -211,7 +266,6 @@ public final class CameraController {
                     validDetections.sort((a, b) -> Float.compare(b.getConfidence(), a.getConfidence()));
                     int limit = Math.min(validDetections.size(), 3);
                     
-                    isProcessingQueue.set(true);
                     pendingDetections.clear();
                     processedResults.clear();
                     
@@ -224,6 +278,8 @@ public final class CameraController {
                     processNext();
                     return; // Don't recycle bitmap, processNext will do it.
                 } else {
+                    // Reset flag if no valid detections found
+                    isProcessingQueue.set(false);
                     Log.v("PIPELINE_TRACE", "3. No boxes passed confidence threshold (>0.5)");
                 }
             } else {
@@ -239,7 +295,7 @@ public final class CameraController {
 
     private void processNext() {
         DetectionResult detection = pendingDetections.poll();
-        
+
         if (detection == null) {
             // STEP 6: Queue empty -> return
             Log.d("PIPELINE_TRACE", "Queue empty, resetting processing flag.");
@@ -255,7 +311,7 @@ public final class CameraController {
         Log.d("SCAN_DEBUG", "Processing next box in queue...");
 
         RectF normBox = detection.getBoundingBox();
-        
+
         // 🚀 SCALE NORMALIZED -> PIXELS for cropping
         float left = normBox.left * currentProcessingBitmap.getWidth();
         float top = normBox.top * currentProcessingBitmap.getHeight();
@@ -282,12 +338,12 @@ public final class CameraController {
             ocrProcessor.process(ocrInput, normalizedText -> {
                 Log.d("PIPELINE_TRACE", "6. OCR Finished. Text: [" + normalizedText + "]");
                 BitmapUtils.safeRecycle(ocrInput);
-                
+
                 if (normalizedText != null && !normalizedText.isEmpty()) {
                     // STEP 7: AVOID DUPLICATES & PREVENT SPAM (using ScanDebouncer)
                     if (scanDebouncer.shouldProcess(normalizedText) && !processedResults.contains(normalizedText)) {
                         processedResults.add(normalizedText);
-                        
+
                         Log.i("PIPELINE_TRACE", "7. Notifying callback with result");
                         // STEP 9: UPDATE RESULT FLOW - Send one-by-one for immediate display
                         if (scanResultCallback != null) {
@@ -299,7 +355,7 @@ public final class CameraController {
                 } else {
                     Log.d("PIPELINE_TRACE", "7. OCR returned empty/null");
                 }
-                
+
                 // STEP 6: After complete -> call processNext()
                 processNext();
             });
@@ -309,6 +365,7 @@ public final class CameraController {
         }
     }
 
+    @OptIn(markerClass = ExperimentalLensFacing.class)
     private void updateOverlay(List<DetectionResult> detections, int bitmapW, int bitmapH) {
         if (overlayView == null) return;
 
@@ -327,13 +384,13 @@ public final class CameraController {
         float offsetY = (scaledH - viewH) / 2f;
 
         // 🚀 MIRRORING DETECTION
-        // Kiosk external cameras often behave like front-facing cameras or 
+        // Kiosk external cameras often behave like front-facing cameras or
         // come mirrored by default. We enable mirroring if it's front OR external.
         boolean isMirrored = false;
         try {
             if (camera != null) {
                 Integer lens = camera.getCameraInfo().getLensFacing();
-                isMirrored = (lens != null && (lens == CameraSelector.LENS_FACING_FRONT || 
+                isMirrored = (lens != null && (lens == CameraSelector.LENS_FACING_FRONT ||
                                               lens == CameraSelector.LENS_FACING_EXTERNAL));
             }
         } catch (Exception ignored) {}
@@ -394,27 +451,47 @@ public final class CameraController {
             try {
                 cameraProvider = future.get();
                 if (cameraProvider == null) return;
-                
+
                 cameraProvider.unbindAll();
 
-                CameraSelector selector = new CameraSelector.Builder()
-                        .requireLensFacing(CameraConfig.LENS_FACING)
+                CameraSelector selector = createCameraSelector();
+
+                ResolutionSelector resSelector = new ResolutionSelector.Builder()
+                        .setResolutionStrategy(new ResolutionStrategy(
+                                CameraConfig.ANALYSIS_RESOLUTION,
+                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER))
                         .build();
 
-        imageAnalysis = new ImageAnalysis.Builder()
-                .setTargetAspectRatio(AspectRatio.RATIO_16_9)
-                .setBackpressureStrategy(CameraConfig.BACKPRESSURE_STRATEGY)
-                .setOutputImageFormat(CameraConfig.IMAGE_FORMAT)
-                .setTargetRotation(Surface.ROTATION_90)
-                .build();
+                imageAnalysis = new ImageAnalysis.Builder()
+                        .setResolutionSelector(resSelector)
+                        .setBackpressureStrategy(CameraConfig.BACKPRESSURE_STRATEGY)
+                        .setOutputImageFormat(CameraConfig.IMAGE_FORMAT)
+                        .setTargetRotation(Surface.ROTATION_90)
+                        .build();
 
                 imageAnalysis.setAnalyzer(cameraExecutor, frameAnalyzer);
 
-                camera = cameraProvider.bindToLifecycle(
-                        owner,
-                        selector,
-                        imageAnalysis
-                );
+                try {
+                    camera = cameraProvider.bindToLifecycle(
+                            owner,
+                            selector,
+                            imageAnalysis
+                    );
+                } catch (Exception e) {
+                    LogUtils.w("Silent analysis bind with RGBA failed, falling back to YUV");
+                    imageAnalysis = new ImageAnalysis.Builder()
+                            .setResolutionSelector(resSelector)
+                            .setBackpressureStrategy(CameraConfig.BACKPRESSURE_STRATEGY)
+                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                            .setTargetRotation(Surface.ROTATION_90)
+                            .build();
+                    imageAnalysis.setAnalyzer(cameraExecutor, frameAnalyzer);
+                    camera = cameraProvider.bindToLifecycle(
+                            owner,
+                            selector,
+                            imageAnalysis
+                    );
+                }
             } catch (Exception e) {
                 LogUtils.e("Silent analysis start failed", e);
             }
@@ -430,13 +507,19 @@ public final class CameraController {
         Display display = previewView.getDisplay();
         int rotation = (display != null) ? display.getRotation() : Surface.ROTATION_0;
 
-        CameraSelector selector = new CameraSelector.Builder()
-                .requireLensFacing(CameraConfig.LENS_FACING)
+        CameraSelector selector = createCameraSelector();
+
+        // 🚀 RESOLUTION STRATEGY: 
+        // Use 1080p for analysis to handle shop glare and high-quality sensors.
+        // FALLBACK_RULE_CLOSEST_LOWER ensures compatibility if 1080p is not supported.
+        ResolutionSelector resSelector = new ResolutionSelector.Builder()
+                .setResolutionStrategy(new ResolutionStrategy(
+                        CameraConfig.ANALYSIS_RESOLUTION,
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER))
                 .build();
 
-        // 🚀 DYNAMIC ROTATION & RATIO
         imageAnalysis = new ImageAnalysis.Builder()
-                .setTargetAspectRatio(AspectRatio.RATIO_16_9)
+                .setResolutionSelector(resSelector)
                 .setBackpressureStrategy(CameraConfig.BACKPRESSURE_STRATEGY)
                 .setOutputImageFormat(CameraConfig.IMAGE_FORMAT)
                 .setTargetRotation(rotation)
@@ -445,7 +528,7 @@ public final class CameraController {
         imageAnalysis.setAnalyzer(cameraExecutor, frameAnalyzer);
 
         preview = new Preview.Builder()
-                .setTargetAspectRatio(AspectRatio.RATIO_16_9)
+                .setResolutionSelector(resSelector)
                 .setTargetRotation(rotation)
                 .build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
@@ -468,7 +551,42 @@ public final class CameraController {
                 camera.getCameraControl().enableTorch(CameraConfig.TORCH_ENABLED_BY_DEFAULT);
             }
         } catch (Exception e) {
-            LogUtils.e("Camera bind failed", e);
+            LogUtils.e("Primary camera bind failed (1080p/RGBA), retrying with safe fallback (720p/YUV)", e);
+            // 🚀 EMULATOR & COMPATIBILITY FALLBACK: 
+            // If high resolution or RGBA fails, try 720p with YUV which is most supported.
+            try {
+                cameraProvider.unbindAll();
+
+                ResolutionSelector fallbackResSelector = new ResolutionSelector.Builder()
+                        .setResolutionStrategy(new ResolutionStrategy(
+                                new android.util.Size(1280, 720),
+                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER))
+                        .build();
+                
+                imageAnalysis = new ImageAnalysis.Builder()
+                        .setResolutionSelector(fallbackResSelector)
+                        .setBackpressureStrategy(CameraConfig.BACKPRESSURE_STRATEGY)
+                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                        .setTargetRotation(rotation)
+                        .build();
+                imageAnalysis.setAnalyzer(cameraExecutor, frameAnalyzer);
+
+                preview = new Preview.Builder()
+                        .setResolutionSelector(fallbackResSelector)
+                        .setTargetRotation(rotation)
+                        .build();
+                preview.setSurfaceProvider(previewView.getSurfaceProvider());
+
+                camera = cameraProvider.bindToLifecycle(
+                        owner,
+                        selector,
+                        preview,
+                        imageAnalysis,
+                        imageCapture
+                );
+            } catch (Exception fatal) {
+                LogUtils.e("Camera bind failed permanently", fatal);
+            }
         }
     }
 

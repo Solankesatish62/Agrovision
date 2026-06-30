@@ -40,20 +40,19 @@ public final class UpdateManager {
     }
 
     private void showDownloadProgressDialog() {
-        android.view.View view = android.view.LayoutInflater.from(context).inflate(android.R.layout.select_dialog_item, null);
         // We'll create a simple custom layout programmatically for reliability
         android.widget.LinearLayout layout = new android.widget.LinearLayout(context);
         layout.setOrientation(android.widget.LinearLayout.VERTICAL);
         layout.setPadding(50, 50, 50, 50);
 
         tvProgress = new android.widget.TextView(context);
-        tvProgress.setText("डाउनलोड होत आहे: 0% (Downloading: 0%)");
+        tvProgress.setText("डाउनलोड होत आहे... (Downloading...)");
         tvProgress.setTextSize(18);
         tvProgress.setPadding(0, 0, 0, 30);
 
         progressBar = new android.widget.ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
-        progressBar.setIndeterminate(false);
+        progressBar.setIndeterminate(true); // Start indeterminate until size is known
 
         layout.addView(tvProgress);
         layout.addView(progressBar);
@@ -84,8 +83,14 @@ public final class UpdateManager {
                     if (total > 0) {
                         int progress = (int) ((downloaded * 100L) / total);
                         handler.post(() -> {
+                            progressBar.setIndeterminate(false);
                             progressBar.setProgress(progress);
                             tvProgress.setText("डाउनलोड होत आहे: " + progress + "% (" + (downloaded/1024/1024) + "MB / " + (total/1024/1024) + "MB)");
+                        });
+                    } else {
+                        handler.post(() -> {
+                            progressBar.setIndeterminate(true);
+                            tvProgress.setText("डाउनलोड होत आहे... (Downloading...)");
                         });
                     }
                 }
@@ -160,6 +165,7 @@ public final class UpdateManager {
                 .setTitle("Update Available")
                 .setMessage("A new version (" + versionName + ") of AgroVision is available. Would you like to update now?")
                 .setCancelable(!isForce)
+                .setOnCancelListener(dialog -> isUpdateInProgress = false)
                 .setPositiveButton("Update", (dialog, which) -> startDownload(apkUrl))
                 .setNegativeButton(isForce ? "Exit App" : "Later", (dialog, which) -> {
                     isUpdateInProgress = false;

@@ -61,12 +61,13 @@ public final class OcrProcessor {
                         String normalized = TextNormalizer.normalize(cleaned);
 
                         isProcessing.set(false);
-                        mainHandler.post(() -> callback.onResult(normalized));
+                        // 🚀 Execute callback on the ML Kit background thread to avoid UI blockage
+                        callback.onResult(normalized);
                     })
                     .addOnFailureListener(e -> {
                         LogUtils.e("OCR Process failed", e);
                         isProcessing.set(false);
-                        mainHandler.post(() -> callback.onResult(""));
+                        callback.onResult("");
                     });
 
         } catch (Exception e) {

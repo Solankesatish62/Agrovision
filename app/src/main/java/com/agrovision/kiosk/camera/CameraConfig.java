@@ -36,12 +36,11 @@ public final class CameraConfig {
        ========================================================= */
 
     /**
-     * Fixed analysis resolution.
+     * Target analysis resolution.
      *
-     * 720p is the sweet spot for YOLO bottle detection.
-     * With RGBA optimization, this is now smooth on kiosk hardware.
+     * 1080p is preferred for high-quality kiosk cameras to handle glare and distance.
      */
-    public static final Size ANALYSIS_RESOLUTION = new Size(1280, 720);
+    public static final Size ANALYSIS_RESOLUTION = new Size(1920, 1080);
 
     /**
      * Image format for analysis.

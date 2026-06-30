@@ -124,7 +124,7 @@ public final class MatchResult {
      * Used by pipeline to mark ScanResult as low confidence.
      */
     public boolean isLowConfidence() {
-        return matchType == MatchType.FUZZY && confidence < 0.75f;
+        return matchType == MatchType.FUZZY && confidence < 0.85f;
     }
 
     /* =========================================================

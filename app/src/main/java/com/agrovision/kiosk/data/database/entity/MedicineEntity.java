@@ -43,6 +43,16 @@ public class MedicineEntity {
     public String company;
 
     /**
+     * CIB&RC Registration Number.
+     */
+    public String cibNo;
+
+    /**
+     * Chemical Composition / Name.
+     */
+    public String chemicalName;
+
+    /**
      * Supported crops.
      *
      * Stored as CSV string via StringListConverter.
@@ -87,6 +97,14 @@ public class MedicineEntity {
      * Stored as CSV string via StringListConverter.
      */
     public String searchKeywords;
+
+    /**
+     * QR/Barcode Prefixes for high-speed matching.
+     *
+     * Stored as CSV string via StringListConverter.
+     * Example: "GS19C,GS1902"
+     */
+    public String barcodePrefixes;
 
     /**
      * Timestamp of last update.

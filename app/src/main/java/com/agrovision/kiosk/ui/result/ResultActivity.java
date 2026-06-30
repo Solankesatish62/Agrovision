@@ -353,7 +353,7 @@ public final class ResultActivity extends AppCompatActivity
     private void stopImageRotation() {
         if (imageSwitcher != null) {
             Log.d(TAG, "Stopping image rotation runnable");
-            imageRotationHandler.removeCallbacks(imageSwitcher);
+            imageRotationHandler.removeCallbacksAndMessages(null);
             imageSwitcher = null;
         }
     }

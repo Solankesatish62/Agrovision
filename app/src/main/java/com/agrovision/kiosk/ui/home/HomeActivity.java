@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
@@ -37,11 +38,13 @@ import com.agrovision.kiosk.state.StateObserver;
 import com.agrovision.kiosk.ui.ad.AdActivity;
 import com.agrovision.kiosk.ui.ad.AdManager;
 import com.agrovision.kiosk.ui.result.ResultActivity;
+import com.agrovision.kiosk.ui.result.UnknownActivity;
 import com.agrovision.kiosk.app.UpdateManager;
 import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
 import com.agrovision.kiosk.util.AudioCacheManager;
 import com.agrovision.kiosk.util.LogUtils;
+import com.agrovision.kiosk.util.SoundManager;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
@@ -70,6 +73,7 @@ public final class HomeActivity extends AppCompatActivity
     private PreviewView cameraPreview;
     private BoundingBoxOverlay overlayView;
     private TextView tvDailyScanCount;
+    private View progressScanner;
 
     // 🚀 Permission Launcher
     private final ActivityResultLauncher<String> requestPermissionLauncher =
@@ -84,8 +88,13 @@ public final class HomeActivity extends AppCompatActivity
             });
 
     // 🚀 Scan Lock & Debounce
-    private boolean isScanLocked = false;
+    private volatile boolean isScanLocked = false;
     private long lastScanTime = 0;
+
+    // 🚀 Barcode Scanner Buffer
+    private final StringBuilder barcodeBuffer = new StringBuilder();
+    private long lastKeyTime = 0;
+    private static final long SCANNER_THRESHOLD_MS = 50;
 
     // Daily Scan Count
     private static final String PREFS_NAME = "scan_stats";
@@ -170,6 +179,11 @@ public final class HomeActivity extends AppCompatActivity
         // 🚀 RE-BIND CAMERA: Check permissions first
         checkCameraPermission();
         resetIdleTimer();
+
+        // Hide progress if it was left visible
+        if (progressScanner != null) {
+            progressScanner.setVisibility(View.GONE);
+        }
     }
 
     private void checkCameraPermission() {
@@ -192,6 +206,7 @@ public final class HomeActivity extends AppCompatActivity
         cameraPreview = findViewById(R.id.cameraPreview);
         overlayView = findViewById(R.id.overlayView);
         tvDailyScanCount = findViewById(R.id.tvDailyScanCount);
+        progressScanner = findViewById(R.id.progressScanner);
 
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
     }
@@ -245,6 +260,9 @@ public final class HomeActivity extends AppCompatActivity
 
         // Initialize Orchestrator
         pipeline = new RecognitionPipelineOrchestrator(getApplicationContext());
+
+        // 🚀 Preload Sounds
+        SoundManager.getInstance(this);
     }
 
     private void startCamera() {
@@ -257,19 +275,132 @@ public final class HomeActivity extends AppCompatActivity
     }
 
     @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            long now = System.currentTimeMillis();
+            
+            // If it's been too long since the last key, it's probably a human, reset buffer
+            if (now - lastKeyTime > SCANNER_THRESHOLD_MS && barcodeBuffer.length() > 0) {
+                barcodeBuffer.setLength(0);
+            }
+            lastKeyTime = now;
+
+            if (event.getKeyCode() == KeyEvent.KEYCODE_ENTER) {
+                String result = barcodeBuffer.toString().trim();
+                if (!result.isEmpty()) {
+                    LogUtils.i("Barcode Gun Scan detected: " + result);
+                    handleBarcodeScan(result);
+                }
+                barcodeBuffer.setLength(0);
+                return true; // Handled
+            }
+
+            char c = (char) event.getUnicodeChar();
+            if (c > 31 && c < 127) { // Printable characters
+                barcodeBuffer.append(c);
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    private void handleBarcodeScan(String rawInput) {
+        synchronized (this) {
+            if (isScanLocked) return;
+            isScanLocked = true;
+        }
+        
+        // 🚀 STOP CAMERA PROCESSING
+        cameraController.resetPipeline();
+        resetIdleTimer();
+        
+        // 🚀 SHOW PROGRESS UI
+        runOnUiThread(() -> {
+            if (progressScanner != null) {
+                progressScanner.setVisibility(View.VISIBLE);
+            }
+        });
+
+        // 🚀 ORCHESTRATE BARCODE SCAN
+        pipeline.handleBarcodeScan(rawInput, new RecognitionPipelineOrchestrator.BarcodeCallback() {
+            @Override
+            public void onResult(List<ScanResult> results) {
+                runOnUiThread(() -> {
+                    if (progressScanner != null) progressScanner.setVisibility(View.GONE);
+                    if (!results.isEmpty()) {
+                        lastScanTime = System.currentTimeMillis();
+                        cameraController.setDetectionEnabled(false);
+                        
+                        boolean hasKnown = false;
+                        for (ScanResult r : results) {
+                            if (r.resultType == ResultType.KNOWN) {
+                                hasKnown = true;
+                                break;
+                            }
+                        }
+                        incrementScanCount(hasKnown);
+                        
+                        launchResultScreen(results);
+                    } else {
+                        synchronized (HomeActivity.this) {
+                            isScanLocked = false;
+                        }
+                    }
+                });
+            }
+
+            @Override
+            public void onUnknown(String scrapedName, String rawCode) {
+                runOnUiThread(() -> {
+                    if (progressScanner != null) progressScanner.setVisibility(View.GONE);
+                    lastScanTime = System.currentTimeMillis();
+                    cameraController.setDetectionEnabled(false);
+
+                    // 🚀 Play Error Sound
+                    SoundManager.getInstance(HomeActivity.this).playError();
+
+                    // Launch Unknown Activity with the scraped name
+                    Intent intent = new Intent(HomeActivity.this, UnknownActivity.class);
+                    intent.putExtra("SCRAPED_NAME", scrapedName);
+                    intent.putExtra("RAW_CODE", rawCode);
+                    startActivity(intent);
+                });
+            }
+
+            @Override
+            public void onFailure() {
+                runOnUiThread(() -> {
+                    if (progressScanner != null) progressScanner.setVisibility(View.GONE);
+                    synchronized (HomeActivity.this) {
+                        isScanLocked = false;
+                    }
+                });
+            }
+        });
+    }
+
+    @Override
     public void onScanCompleted(List<String> normalizedTexts) {
         Log.d("PIPELINE_TRACE", "8. onScanCompleted triggered in HomeActivity. Items: " + (normalizedTexts != null ? normalizedTexts.size() : 0));
 
-        // 🚀 STEP 1: Debounce and Lock Check
-        long now = System.currentTimeMillis();
-        if (isScanLocked) {
-            Log.d("PIPELINE_TRACE", "8. Skipped: Scanner is locked");
-            return;
+        // 🚀 ATOMIC LOCK CHECK & DEBOUNCE (Fix for double-triggering)
+        synchronized (this) {
+            if (isScanLocked) {
+                Log.d("PIPELINE_TRACE", "8. Skipped: Scanner is already locked");
+                return;
+            }
+
+            long now = System.currentTimeMillis();
+            if (now - lastScanTime < 2500) { // 🚀 Increased debounce to 2.5s for stability
+                Log.d("PIPELINE_TRACE", "8. Skipped: Debounce active (" + (now - lastScanTime) + "ms)");
+                return;
+            }
+
+            Log.i("PIPELINE_TRACE", "8. 🟢 Scan Lock ACQUIRED");
+            isScanLocked = true;
         }
-        if (now - lastScanTime < 1500) {
-            Log.d("PIPELINE_TRACE", "8. Skipped: Debounce active (" + (now - lastScanTime) + "ms)");
-            return;
-        }
+
+        // 🚀 STOP FURTHER PIPELINE PROCESSING IMMEDIATELY
+        cameraController.resetPipeline();
 
         // 🚀 Reset idle timer because camera saw something or detection is active
         resetIdleTimer();
@@ -280,22 +411,25 @@ public final class HomeActivity extends AppCompatActivity
             stateMachine.transition(StateEvent.ACTIVITY_DETECTED);
         }
 
-        runOnUiThread(() -> {
-            // Re-check lock on UI thread to prevent race conditions during navigation
-            if (isScanLocked) return;
+        // 🚀 PERFORM HEAVY RESOLUTION ON BACKGROUND THREAD
+        Log.d("PIPELINE_TRACE", "9. Resolving medicines on background thread...");
+        List<ScanResult> results = pipeline.resolve(normalizedTexts);
 
-            Log.d("PIPELINE_TRACE", "9. Resolving medicines...");
-            List<ScanResult> results = pipeline.resolve(normalizedTexts);
-
-            if (results == null || results.isEmpty()) {
-                LogUtils.w("No scan results produced");
-                Log.d("PIPELINE_TRACE", "9. Resolve returned empty list");
-                return;
+        if (results == null || results.isEmpty()) {
+            LogUtils.w("No scan results produced");
+            Log.d("PIPELINE_TRACE", "9. Resolve returned empty list. UNLOCKING.");
+            synchronized (this) {
+                isScanLocked = false;
             }
+            return;
+        }
 
-            // 🚀 STEP 2: Lock the scanner
-            isScanLocked = true;
+        runOnUiThread(() -> {
+            // Update timestamp only after successful resolution to start debounce period
             lastScanTime = System.currentTimeMillis();
+
+            // 🚀 HARD PAUSE CAMERA to prevent any new detections while navigating
+            cameraController.setDetectionEnabled(false);
 
             // Prefetch audio immediately
             AudioCacheManager cacheManager = AudioCacheManager.getInstance(this);
@@ -309,7 +443,13 @@ public final class HomeActivity extends AppCompatActivity
 
             Log.i("PIPELINE_TRACE", "10. Launching Result screen. Count: " + results.size());
             
-            boolean hasKnown = results.stream().anyMatch(r -> r.resultType == ResultType.KNOWN);
+            boolean hasKnown = false;
+            for (ScanResult r : results) {
+                if (r.resultType == ResultType.KNOWN) {
+                    hasKnown = true;
+                    break;
+                }
+            }
             incrementScanCount(hasKnown);
             
             launchResultScreen(results);
@@ -328,6 +468,13 @@ public final class HomeActivity extends AppCompatActivity
 
         boolean hasKnown = results.stream()
                 .anyMatch(r -> r.resultType == ResultType.KNOWN);
+
+        // 🚀 Play appropriate sound
+        if (hasKnown) {
+            SoundManager.getInstance(this).playSuccess();
+        } else {
+            SoundManager.getInstance(this).playError();
+        }
 
         Log.d("PIPELINE_TRACE", "11. State transition. hasKnown: " + hasKnown);
         if (hasKnown) {
@@ -349,7 +496,9 @@ public final class HomeActivity extends AppCompatActivity
 
         // If we just finished an ad, make sure we are in READY state and resume scanning
         if (state == AppState.READY) {
-            isScanLocked = false;
+            synchronized (this) {
+                isScanLocked = false;
+            }
         }
     }
 
@@ -446,6 +595,12 @@ public final class HomeActivity extends AppCompatActivity
         if (tvDailyScanCount != null) {
             tvDailyScanCount.setText(String.format(Locale.US, "आजचे स्कॅन: %d", count));
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        SoundManager.getInstance(this).release();
     }
 
     private String getTodayDateString() {
