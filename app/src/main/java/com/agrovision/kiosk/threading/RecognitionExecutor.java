@@ -17,6 +17,7 @@ import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadFactory;
 
 // Import core ThreadPoolExecutor
+import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 
 // Import time unit enum
@@ -93,18 +94,16 @@ public final class RecognitionExecutor {
      * - Latest image always wins
      */
     public static void submit(Runnable task) {
-
-        // Defensive null check
         if (task == null) return;
-
         try {
-            // Submit task to executor
             EXECUTOR.execute(task);
-
         } catch (Exception e) {
-            // Log failure without crashing system
             LogUtils.e("OCR task submission failed", e);
         }
+    }
+
+    public static Executor get() {
+        return EXECUTOR;
     }
 
     /**

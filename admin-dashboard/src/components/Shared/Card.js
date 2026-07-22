@@ -19,13 +19,13 @@ const Card = ({ title, value, color, icon }) => (
   }}>
     <div style={{
       position: 'absolute',
-      top: '-10px',
-      right: '-10px',
-      fontSize: '80px',
-      opacity: 0.05,
+      top: '10px',
+      right: '20px',
+      fontSize: '48px',
+      opacity: 0.1,
       color: color
     }}>
-      {icon}
+      {icon.startsWith('fa-') ? <i className={`fas ${icon}`}></i> : icon}
     </div>
     <h3 style={{
       margin: '0 0 12px 0',

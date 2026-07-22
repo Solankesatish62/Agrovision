@@ -34,6 +34,7 @@ public final class BoxStabilityTracker {
 
     private long stableStartTimeMs = 0;
     private boolean stable = false;
+    private int frameCount = 0;
 
     /* ---------------- PUBLIC API ---------------- */
 
@@ -42,6 +43,15 @@ public final class BoxStabilityTracker {
         latestBox = null;
         stableStartTimeMs = 0;
         stable = false;
+        frameCount = 0;
+    }
+
+    public int getFrameCount() {
+        return frameCount;
+    }
+
+    public long getStableStartTimeMs() {
+        return stableStartTimeMs;
     }
 
     /**
@@ -50,6 +60,7 @@ public final class BoxStabilityTracker {
      * @return true if detection JUST became stable
      */
     public boolean update(DetectionResult detection) {
+        frameCount++;
 
         if (detection == null) {
             reset();

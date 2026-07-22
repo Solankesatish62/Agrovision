@@ -32,6 +32,7 @@ import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
 import com.agrovision.kiosk.util.AudioCacheManager;
 import com.agrovision.kiosk.util.LogUtils;
+import com.agrovision.kiosk.util.PerformanceProfiler;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
@@ -105,12 +106,21 @@ public final class ResultActivity extends AppCompatActivity
     private final Handler imageRotationHandler = new Handler(Looper.getMainLooper());
     private Runnable imageSwitcher;
 
+    public ResultActivity() {
+        super();
+        PerformanceProfiler.start("ResultActivity Startup");
+        PerformanceProfiler.log("ResultActivity Startup", "Activity Constructor");
+    }
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
+        PerformanceProfiler.log("ResultActivity Startup", "onCreate() START");
         super.onCreate(savedInstanceState);
 
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+        PerformanceProfiler.log("ResultActivity Startup", "setContentView() START");
         setContentView(R.layout.activity_result);
+        PerformanceProfiler.log("ResultActivity Startup", "setContentView() END");
 
         blockBackNavigation();
         hideSystemUI();
@@ -118,8 +128,14 @@ public final class ResultActivity extends AppCompatActivity
         // 🚀 DISABLE DETECTION while result is showing
         CameraController.getInstance(this).setDetectionEnabled(false);
 
+        PerformanceProfiler.log("ResultActivity Startup", "bindViews() START");
         bindControls();
+        PerformanceProfiler.log("ResultActivity Startup", "bindViews() END");
+        
+        PerformanceProfiler.log("ResultActivity Startup", "initRenderer() START");
         initRenderer();
+        PerformanceProfiler.log("ResultActivity Startup", "initRenderer() END");
+        
         loadResults();
 
         if (scanResults == null || scanResults.isEmpty()) {
@@ -129,7 +145,26 @@ public final class ResultActivity extends AppCompatActivity
         }
 
         setupControls();
+        
+        PerformanceProfiler.log("ResultActivity Startup", "Data Binding & First Render START");
         renderCurrent();
+        PerformanceProfiler.log("ResultActivity Startup", "Data Binding & First Render END");
+        
+        PerformanceProfiler.end("ResultActivity Startup");
+        
+        // Setup window focus listener for "Fully Visible"
+        getWindow().getDecorView().getViewTreeObserver().addOnWindowFocusChangeListener(hasFocus -> {
+            if (hasFocus) {
+                PerformanceProfiler.log("ResultActivity Startup", "Window Focus Gained - UI Ready");
+                PerformanceProfiler.printSummary();
+            }
+        });
+        
+        getWindow().getDecorView().getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+            PerformanceProfiler.log("ResultActivity Startup", "First Layout");
+        });
+        
+        PerformanceProfiler.log("ResultActivity Startup", "onCreate() END");
     }
 
     @Override
@@ -197,6 +232,8 @@ public final class ResultActivity extends AppCompatActivity
     }
 
     private void returnToScan() {
+        PerformanceProfiler.start("Return Home");
+        PerformanceProfiler.log("Return Home", "Auto Return Started");
         LogUtils.i("Executing deterministic navigation to HomeActivity");
 
         stopTimer();
@@ -222,6 +259,8 @@ public final class ResultActivity extends AppCompatActivity
             intent.putExtra(AdActivity.EXTRA_AD_DURATION, 8000L); // 8 seconds for scan ad
             startActivity(intent);
             overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+            PerformanceProfiler.log("Return Home", "ResultActivity Finish via Ad");
+            PerformanceProfiler.end("Return Home");
             finish();
             return;
         }
@@ -233,6 +272,8 @@ public final class ResultActivity extends AppCompatActivity
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(intent);
         overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+        PerformanceProfiler.log("Return Home", "ResultActivity Finish");
+        PerformanceProfiler.end("Return Home");
         finish();
     }
 
@@ -457,15 +498,19 @@ public final class ResultActivity extends AppCompatActivity
     }
 
     private void playAudio(String medicineId, int index, String url) {
+        PerformanceProfiler.start("Audio Ready");
         Log.d("AUDIO", "Play requested for: " + medicineId + " index: " + index);
 
         if (mediaPlayer != null && mediaPlayer.isPlaying()) {
             Log.d("AUDIO", "Skipping: already playing");
+            PerformanceProfiler.end("Audio Ready");
             return;
         }
 
         AudioCacheManager cacheManager = AudioCacheManager.getInstance(this);
+        PerformanceProfiler.start("Audio Cache Lookup");
         String cachedPath = cacheManager.getCachedAudioPath(medicineId, index);
+        PerformanceProfiler.end("Audio Cache Lookup");
 
         if (cachedPath == null) {
             Log.d("AUDIO", "cache miss: " + medicineId + " index: " + index);
@@ -488,6 +533,7 @@ public final class ResultActivity extends AppCompatActivity
                 @Override
                 public void onDownloadFailed(Exception e) {
                     Log.e("AUDIO", "Download failed during play attempt", e);
+                    PerformanceProfiler.end("Audio Ready");
                 }
             });
             return; 
@@ -506,6 +552,7 @@ public final class ResultActivity extends AppCompatActivity
             mediaPlayer = null;
         }
 
+        PerformanceProfiler.start("MediaPlayer Init");
         mediaPlayer = new MediaPlayer();
         try {
             float volume = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
@@ -520,6 +567,8 @@ public final class ResultActivity extends AppCompatActivity
                 // Step 4: DELETE CORRUPTED CACHE
                 cacheManager.deleteCachedFile(medicineId, index);
                 isAudioPlaying = false;
+                PerformanceProfiler.end("MediaPlayer Init");
+                PerformanceProfiler.end("Audio Ready");
                 return;
             }
 
@@ -536,6 +585,8 @@ public final class ResultActivity extends AppCompatActivity
             });
 
             mediaPlayer.setOnPreparedListener(mp -> {
+                PerformanceProfiler.log("Audio Ready", "Playback Ready");
+                PerformanceProfiler.end("Audio Ready");
                 Log.d("AUDIO", "playback started");
                 mp.start();
             });
@@ -556,14 +607,19 @@ public final class ResultActivity extends AppCompatActivity
                 currentAudioIndex++;
                 playCurrentAudio();
 
+                PerformanceProfiler.end("Audio Ready");
                 return true;
             });
 
+            PerformanceProfiler.start("Audio Decode");
             mediaPlayer.prepareAsync();
+            PerformanceProfiler.end("Audio Decode");
+            PerformanceProfiler.end("MediaPlayer Init");
             LogUtils.i("Audio prepare started (cached): " + cachedPath);
         } catch (Exception e) {
             LogUtils.e("Error setting up audio: " + cachedPath, e);
             isAudioPlaying = false;
+            PerformanceProfiler.end("Audio Ready");
         }
     }
 

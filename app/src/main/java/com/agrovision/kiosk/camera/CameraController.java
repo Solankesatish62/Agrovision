@@ -24,6 +24,7 @@ import com.agrovision.kiosk.ui.home.BoundingBoxOverlay;
 import com.agrovision.kiosk.util.BitmapUtils;
 import com.agrovision.kiosk.util.ImageUtils;
 import com.agrovision.kiosk.util.LogUtils;
+import com.agrovision.kiosk.util.PerformanceProfiler;
 import com.agrovision.kiosk.util.RectUtils;
 import com.agrovision.kiosk.vision.detection.*;
 import com.agrovision.kiosk.vision.recognition.OcrProcessor;
@@ -130,6 +131,9 @@ public final class CameraController {
     public void setDetectionEnabled(boolean enabled) {
         Log.i("PIPELINE_TRACE", "Detection " + (enabled ? "ENABLED" : "DISABLED"));
         Log.d("SCAN_DEBUG", "Vision analyzer " + (enabled ? "RESUMED" : "PAUSED"));
+        if (enabled) {
+            PerformanceProfiler.log("Queue Profiling", "Preview Resumed");
+        }
         isDetectionEnabled.set(enabled);
         if (!enabled) {
             resetPipeline();
@@ -148,6 +152,7 @@ public final class CameraController {
     public void resetPipeline() {
         Log.i("PIPELINE_TRACE", "Resetting vision pipeline status");
         isProcessingQueue.set(false);
+        PerformanceProfiler.unlock();
         pendingDetections.clear();
         processedResults.clear();
         if (currentProcessingBitmap != null) {
@@ -204,65 +209,93 @@ public final class CameraController {
        ========================================================= */
 
     private long lastProcessTime = 0;
+    private long lastPreviewFrameTime = 0;
     private static final long PROCESS_THROTTLE_MS = 100; // 🚀 Reduced from 200ms to 100ms for "instant" feel
 
     private void handleFrame(@NonNull ImageProxy image) {
+        lastPreviewFrameTime = System.currentTimeMillis();
         if (!isDetectionEnabled.get()) {
             image.close();
             return;
         }
 
-        // 🚀 PERFORMANCE OPTIMIZATION:
-        // If the pipeline is busy processing previous detections (OCR/Matching),
-        // we skip detection on new frames to free up CPU resources.
-        // This prevents the "stuttering" or "stuck" feel on lower-end kiosk hardware.
         if (isProcessingQueue.get()) {
+            image.close();
             return;
         }
 
-        long now = System.currentTimeMillis();
-        Log.v("PIPELINE_TRACE", "1. Frame received");
+        // 🚀 STAGE 1 & 2: Frame Arrival & Acquire ImageProxy
+        PerformanceProfiler.startScan();
+        PerformanceProfiler.start("Camera Frame");
+        PerformanceProfiler.log("Camera Frame", "Frame Number: " + image.hashCode());
+        PerformanceProfiler.log("Camera Frame", "Resolution: " + image.getWidth() + "x" + image.getHeight());
+        PerformanceProfiler.log("Camera Frame", "Rotation: " + image.getImageInfo().getRotationDegrees());
+        PerformanceProfiler.end("Camera Frame");
 
-        // 🚀 Step 2: Still throttle detection to avoid overworking CPU
+        long now = System.currentTimeMillis();
+
         if (now - lastProcessTime < PROCESS_THROTTLE_MS) {
+            image.close();
             return;
         }
         lastProcessTime = now;
 
         try {
+            PerformanceProfiler.start("YUV -> RGB");
             Bitmap bitmap = ImageUtils.toBitmap(image);
+            PerformanceProfiler.end("YUV -> RGB");
+            image.close();
+
             if (bitmap == null) return;
 
-            // 🚀 ALWAYS DETECT (Step 8: Detection continues always)
+            PerformanceProfiler.start("YOLO");
             List<DetectionResult> detections = yoloDetector.detect(bitmap);
-            Log.v("PIPELINE_TRACE", "2. YOLO Detection finished. Boxes: " + detections.size());
+            PerformanceProfiler.end("YOLO");
 
-            // 🚀 ALWAYS UPDATE UI OVERLAY
+            // 🚀 STAGE 14: Overlay
+            PerformanceProfiler.start("Overlay Draw");
             updateOverlay(detections, bitmap.getWidth(), bitmap.getHeight());
+            PerformanceProfiler.end("Overlay Draw");
+
+            PerformanceProfiler.printSummary();
 
             if (detections.isEmpty()) {
                 BitmapUtils.safeRecycle(bitmap);
                 return;
             }
 
-            // 🚀 START PROCESSING QUEUE IF IDLE (Step 6: Create Processing Queue)
-            // Use compareAndSet to prevent race conditions when multiple frames are processed
+            // 🚀 STABILITY TRACKING (New Logic)
+            // Use the top detection to check stability
+            DetectionResult topDetection = detections.get(0);
+            PerformanceProfiler.start("Bounding Stability");
+            boolean justBecameStable = stabilityTracker.update(topDetection);
+
+            if (!stabilityTracker.isStable()) {
+                PerformanceProfiler.log("Bounding Stability", "Frames Seen: " + stabilityTracker.getFrameCount());
+                PerformanceProfiler.end("Bounding Stability");
+                Log.v("PIPELINE_TRACE", "3. Waiting for stability...");
+                BitmapUtils.safeRecycle(bitmap);
+                return;
+            }
+            PerformanceProfiler.log("Bounding Stability", "Stable after " + stabilityTracker.getFrameCount() + " frames");
+            PerformanceProfiler.end("Bounding Stability");
+
+            // 🚀 START PROCESSING QUEUE IF IDLE
             if (isProcessingQueue.compareAndSet(false, true)) {
+                PerformanceProfiler.lock();
+                PerformanceProfiler.log("Queue Profiling", "Preview Paused");
+                // If we just became stable, or we are stable and idle, process.
                 List<DetectionResult> validDetections = new ArrayList<>();
                 for (DetectionResult det : detections) {
-                    // STEP 3: confidence > 0.5
                     if (det.getConfidence() > 0.5f) {
                         validDetections.add(det);
                     }
                 }
 
                 if (!validDetections.isEmpty()) {
-                    Log.i("PIPELINE_TRACE", "3. Processing triggered. Valid Boxes: " + validDetections.size());
-
-                    // 🚀 STATE TRANSITION: Notify that an object is detected
+                    Log.i("PIPELINE_TRACE", "4. Stable & Processing triggered. Valid Boxes: " + validDetections.size());
                     stateMachine.transition(StateEvent.OBJECT_DETECTED);
 
-                    // STEP 4: LIMIT MAX OBJECTS
                     validDetections.sort((a, b) -> Float.compare(b.getConfidence(), a.getConfidence()));
                     int limit = Math.min(validDetections.size(), 3);
                     
@@ -274,16 +307,11 @@ public final class CameraController {
                     }
                     
                     currentProcessingBitmap = bitmap;
-                    Log.d("SCAN_DEBUG", "Boxes detected: " + validDetections.size() + ". Starting queue processing.");
                     processNext();
-                    return; // Don't recycle bitmap, processNext will do it.
+                    return; 
                 } else {
-                    // Reset flag if no valid detections found
                     isProcessingQueue.set(false);
-                    Log.v("PIPELINE_TRACE", "3. No boxes passed confidence threshold (>0.5)");
                 }
-            } else {
-                Log.v("PIPELINE_TRACE", "3. Processing skipped: Queue is busy");
             }
 
             BitmapUtils.safeRecycle(bitmap);
@@ -319,6 +347,10 @@ public final class CameraController {
         float bottom = normBox.bottom * currentProcessingBitmap.getHeight();
         RectF pixelBox = new RectF(left, top, right, bottom);
 
+        PerformanceProfiler.start("Crop");
+        PerformanceProfiler.log("Crop", String.format("Bitmap Size: %dx%d, Crop Size: %.0fx%.0f", 
+                currentProcessingBitmap.getWidth(), currentProcessingBitmap.getHeight(), pixelBox.width(), pixelBox.height()));
+        
         Bitmap cropped = BitmapUtils.safeCrop(
                 currentProcessingBitmap,
                 RectUtils.toRect(
@@ -327,6 +359,7 @@ public final class CameraController {
                         currentProcessingBitmap.getHeight()
                 )
         );
+        PerformanceProfiler.end("Crop");
 
         if (cropped != null) {
             Log.d("PIPELINE_TRACE", "5. OCR Started");
@@ -335,7 +368,11 @@ public final class CameraController {
                 BitmapUtils.safeRecycle(cropped);
             }
 
+            PerformanceProfiler.start("OCR");
+            PerformanceProfiler.log("OCR", "OCR Requested");
             ocrProcessor.process(ocrInput, normalizedText -> {
+                PerformanceProfiler.end("OCR");
+                PerformanceProfiler.log("OCR", "Recognized Text Count: " + (normalizedText != null ? 1 : 0));
                 Log.d("PIPELINE_TRACE", "6. OCR Finished. Text: [" + normalizedText + "]");
                 BitmapUtils.safeRecycle(ocrInput);
 

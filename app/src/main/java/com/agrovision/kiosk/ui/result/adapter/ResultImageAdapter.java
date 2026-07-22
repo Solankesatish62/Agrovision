@@ -9,10 +9,17 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.agrovision.kiosk.R;
+import com.agrovision.kiosk.util.PerformanceProfiler;
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.DataSource;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.load.engine.GlideException;
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
+import com.bumptech.glide.request.RequestListener;
+import com.bumptech.glide.request.target.Target;
 
+import android.graphics.drawable.Drawable;
+import androidx.annotation.Nullable;
 import java.util.Collections;
 import java.util.List;
 
@@ -45,8 +52,27 @@ public final class ResultImageAdapter
         String url = imageUrls.get(position);
         if (url == null) return;
 
+        String section = "Image Loading " + (position + 1);
+        PerformanceProfiler.start(section);
+
         Glide.with(h.itemView.getContext())
                 .load(url)
+                .listener(new RequestListener<Drawable>() {
+                    @Override
+                    public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
+                        PerformanceProfiler.log(section, "Load Failed");
+                        PerformanceProfiler.end(section);
+                        return false;
+                    }
+
+                    @Override
+                    public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target, DataSource dataSource, boolean isFirstResource) {
+                        PerformanceProfiler.log(section, "Cache Hit: " + (dataSource != DataSource.REMOTE));
+                        PerformanceProfiler.log(section, "Display Time");
+                        PerformanceProfiler.end(section);
+                        return false;
+                    }
+                })
                 .transition(DrawableTransitionOptions.withCrossFade())
                 .placeholder(R.drawable.ic_launcher_background)
                 .error(android.R.drawable.ic_menu_report_image)

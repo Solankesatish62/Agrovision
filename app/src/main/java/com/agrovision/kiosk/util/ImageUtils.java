@@ -36,6 +36,7 @@ public final class ImageUtils {
     @Nullable
     public static Bitmap toBitmap(@NonNull ImageProxy image) {
         try {
+            Bitmap result;
             if (image.getFormat() == android.graphics.ImageFormat.YUV_420_888) {
                 // Fallback for YUV if needed
                 byte[] nv21 = yuv420ToNv21(image);
@@ -43,14 +44,20 @@ public final class ImageUtils {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 yuvImage.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), 90, out);
                 byte[] jpegBytes = out.toByteArray();
-                return android.graphics.BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length);
+                result = android.graphics.BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length);
+            } else {
+                // 🚀 ULTRA FAST PATH: RGBA_8888 directly to Bitmap
+                result = Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
+                result.copyPixelsFromBuffer(image.getPlanes()[0].getBuffer());
             }
 
-            // 🚀 ULTRA FAST PATH: RGBA_8888 directly to Bitmap
-            // This avoids JPEG compression and is much smoother for the preview.
-            Bitmap bitmap = Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
-            bitmap.copyPixelsFromBuffer(image.getPlanes()[0].getBuffer());
-            return bitmap;
+            int rotation = image.getImageInfo().getRotationDegrees();
+            if (rotation != 0) {
+                PerformanceProfiler.start("Rotate Bitmap");
+                result = rotate(result, rotation);
+                PerformanceProfiler.end("Rotate Bitmap");
+            }
+            return result;
 
         } catch (Exception e) {
             LogUtils.e("ImageProxy -> Bitmap failed", e);

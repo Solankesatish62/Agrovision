@@ -103,7 +103,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:background="#1A1A1A"
-                app:scaleType="fitCenter" />
+                app:scaleType="fillCenter" />
 
             <com.agrovision.kiosk.ui.home.BoundingBoxOverlay
                 android:id="@+id/overlayView"

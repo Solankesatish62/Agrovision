@@ -11,6 +11,7 @@ import com.agrovision.kiosk.ui.result.model.ResultInfoItem;
 import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
 import com.agrovision.kiosk.util.BarcodeParser;
+import com.agrovision.kiosk.util.PerformanceProfiler;
 import com.agrovision.kiosk.vision.mapping.MatchResult;
 import com.agrovision.kiosk.vision.mapping.MedicineMatcher;
 
@@ -122,10 +123,14 @@ public final class RecognitionPipelineOrchestrator {
      * 100% Offline Matching.
      */
     public List<ScanResult> resolve(List<String> normalizedTexts) {
+        PerformanceProfiler.start("Pipeline Resolve");
         Log.d("PIPELINE_TRACE", "9a. Orchestrator resolving " + (normalizedTexts != null ? normalizedTexts.size() : 0) + " items");
         
         List<ScanResult> results = new ArrayList<>();
-        if (normalizedTexts == null || normalizedTexts.isEmpty()) return results;
+        if (normalizedTexts == null || normalizedTexts.isEmpty()) {
+            PerformanceProfiler.end("Pipeline Resolve");
+            return results;
+        }
 
         for (String text : normalizedTexts) {
             if (text == null || text.trim().isEmpty()) continue;
@@ -159,6 +164,7 @@ public final class RecognitionPipelineOrchestrator {
                 ));
             }
         }
+        PerformanceProfiler.end("Pipeline Resolve");
         return results;
     }
 }

@@ -35,6 +35,9 @@ import com.agrovision.kiosk.state.AppState;
 import com.agrovision.kiosk.state.StateEvent;
 import com.agrovision.kiosk.state.StateMachine;
 import com.agrovision.kiosk.state.StateObserver;
+import com.agrovision.kiosk.threading.IoExecutor;
+import com.agrovision.kiosk.threading.MatchingExecutor;
+import com.agrovision.kiosk.threading.RecognitionExecutor;
 import com.agrovision.kiosk.ui.ad.AdActivity;
 import com.agrovision.kiosk.ui.ad.AdManager;
 import com.agrovision.kiosk.ui.result.ResultActivity;
@@ -44,6 +47,7 @@ import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
 import com.agrovision.kiosk.util.AudioCacheManager;
 import com.agrovision.kiosk.util.LogUtils;
+import com.agrovision.kiosk.util.PerformanceProfiler;
 import com.agrovision.kiosk.util.SoundManager;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.FieldValue;
@@ -165,6 +169,7 @@ public final class HomeActivity extends AppCompatActivity
     @Override
     protected void onResume() {
         super.onResume();
+        PerformanceProfiler.log("Return Home", "HomeActivity Visible");
         Log.d("STATE_DEBUG", "HomeActivity resumed. Current state: " + stateMachine.getCurrentState());
         
         // 🚀 Unlock scanning when returning to Home
@@ -380,90 +385,98 @@ public final class HomeActivity extends AppCompatActivity
 
     @Override
     public void onScanCompleted(List<String> normalizedTexts) {
-        Log.d("PIPELINE_TRACE", "8. onScanCompleted triggered in HomeActivity. Items: " + (normalizedTexts != null ? normalizedTexts.size() : 0));
+        PerformanceProfiler.start("HomeActivity.onScanCompleted");
+        Log.d("PIPELINE_TRACE", "8. onScanCompleted triggered in HomeActivity.");
 
-        // 🚀 ATOMIC LOCK CHECK & DEBOUNCE (Fix for double-triggering)
+        // 🚀 ATOMIC LOCK CHECK & DEBOUNCE
         synchronized (this) {
             if (isScanLocked) {
-                Log.d("PIPELINE_TRACE", "8. Skipped: Scanner is already locked");
+                PerformanceProfiler.end("HomeActivity.onScanCompleted");
                 return;
             }
 
             long now = System.currentTimeMillis();
-            if (now - lastScanTime < 2500) { // 🚀 Increased debounce to 2.5s for stability
-                Log.d("PIPELINE_TRACE", "8. Skipped: Debounce active (" + (now - lastScanTime) + "ms)");
+            if (now - lastScanTime < 2500) {
+                PerformanceProfiler.end("HomeActivity.onScanCompleted");
                 return;
             }
 
-            Log.i("PIPELINE_TRACE", "8. 🟢 Scan Lock ACQUIRED");
             isScanLocked = true;
         }
 
-        // 🚀 STOP FURTHER PIPELINE PROCESSING IMMEDIATELY
-        cameraController.resetPipeline();
-
-        // 🚀 Reset idle timer because camera saw something or detection is active
-        resetIdleTimer();
-
-        // If we were in IDLE state, transition to READY first (UI wake up)
-        if (stateMachine.getCurrentState() == AppState.IDLE) {
-            Log.i("PIPELINE_TRACE", "8. Waking up from IDLE");
-            stateMachine.transition(StateEvent.ACTIVITY_DETECTED);
-        }
-
         // 🚀 PERFORM HEAVY RESOLUTION ON BACKGROUND THREAD
-        Log.d("PIPELINE_TRACE", "9. Resolving medicines on background thread...");
-        List<ScanResult> results = pipeline.resolve(normalizedTexts);
+        MatchingExecutor.submit(() -> {
+            Log.d("PIPELINE_TRACE", "9. Resolving medicines on background thread...");
+            List<ScanResult> results = pipeline.resolve(normalizedTexts);
 
-        if (results == null || results.isEmpty()) {
-            LogUtils.w("No scan results produced");
-            Log.d("PIPELINE_TRACE", "9. Resolve returned empty list. UNLOCKING.");
-            synchronized (this) {
-                isScanLocked = false;
+            if (results == null || results.isEmpty()) {
+                LogUtils.w("No scan results produced");
+                synchronized (this) {
+                    isScanLocked = false;
+                }
+                PerformanceProfiler.end("HomeActivity.onScanCompleted");
+                return;
             }
-            return;
-        }
 
-        runOnUiThread(() -> {
-            // Update timestamp only after successful resolution to start debounce period
-            lastScanTime = System.currentTimeMillis();
+            runOnUiThread(() -> {
+                // 🚀 STOP FURTHER PIPELINE PROCESSING only after we have a valid result
+                cameraController.resetPipeline();
 
-            // 🚀 HARD PAUSE CAMERA to prevent any new detections while navigating
-            cameraController.setDetectionEnabled(false);
+                // Update timestamp only after successful resolution
+                lastScanTime = System.currentTimeMillis();
 
-            // Prefetch audio immediately
-            AudioCacheManager cacheManager = AudioCacheManager.getInstance(this);
-            for (ScanResult res : results) {
-                if (res.medicineId != null && res.audioUrls != null) {
-                    for (int i = 0; i < res.audioUrls.size(); i++) {
-                        cacheManager.prefetchAudio(res.medicineId, i, res.audioUrls.get(i), null);
+                // 🚀 Reset idle timer
+                resetIdleTimer();
+
+                if (stateMachine.getCurrentState() == AppState.IDLE) {
+                    stateMachine.transition(StateEvent.ACTIVITY_DETECTED);
+                }
+
+                // 🚀 HARD PAUSE CAMERA
+                cameraController.setDetectionEnabled(false);
+
+                // Prefetch audio immediately (IO task)
+                IoExecutor.submit(() -> {
+                    AudioCacheManager cacheManager = AudioCacheManager.getInstance(this);
+                    for (ScanResult res : results) {
+                        if (res.medicineId != null && res.audioUrls != null) {
+                            for (int i = 0; i < res.audioUrls.size(); i++) {
+                                cacheManager.prefetchAudio(res.medicineId, i, res.audioUrls.get(i), null);
+                            }
+                        }
+                    }
+                });
+
+                Log.i("PIPELINE_TRACE", "10. Launching Result screen.");
+                
+                boolean hasKnown = false;
+                for (ScanResult r : results) {
+                    if (r.resultType == ResultType.KNOWN) {
+                        hasKnown = true;
+                        break;
                     }
                 }
-            }
-
-            Log.i("PIPELINE_TRACE", "10. Launching Result screen. Count: " + results.size());
-            
-            boolean hasKnown = false;
-            for (ScanResult r : results) {
-                if (r.resultType == ResultType.KNOWN) {
-                    hasKnown = true;
-                    break;
-                }
-            }
-            incrementScanCount(hasKnown);
-            
-            launchResultScreen(results);
+                incrementScanCount(hasKnown);
+                
+                PerformanceProfiler.end("HomeActivity.onScanCompleted");
+                launchResultScreen(results);
+            });
         });
     }
 
     private void launchResultScreen(List<ScanResult> results) {
+        PerformanceProfiler.start("launchResultScreen");
+        PerformanceProfiler.log("launchResultScreen", "Method Enter");
         Intent intent = new Intent(this, ResultActivity.class);
+        PerformanceProfiler.log("launchResultScreen", "Intent Created");
         intent.putParcelableArrayListExtra(
                 ResultActivity.EXTRA_SCAN_RESULTS,
                 new ArrayList<>(results)
         );
+        PerformanceProfiler.log("launchResultScreen", "Intent Extras Prepared");
 
         startActivity(intent);
+        PerformanceProfiler.log("launchResultScreen", "startActivity() called");
         overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
 
         boolean hasKnown = results.stream()
@@ -482,6 +495,8 @@ public final class HomeActivity extends AppCompatActivity
         } else {
             stateMachine.transition(StateEvent.MATCH_NOT_FOUND);
         }
+        PerformanceProfiler.log("launchResultScreen", "Method Exit");
+        PerformanceProfiler.end("launchResultScreen");
     }
 
     @Override

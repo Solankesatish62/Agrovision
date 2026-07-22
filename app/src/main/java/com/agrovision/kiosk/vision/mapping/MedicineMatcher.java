@@ -2,6 +2,7 @@ package com.agrovision.kiosk.vision.mapping;
 
 import com.agrovision.kiosk.data.model.Medicine;
 import com.agrovision.kiosk.util.LogUtils;
+import com.agrovision.kiosk.util.PerformanceProfiler;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -50,7 +51,53 @@ public final class MedicineMatcher {
     // Step 14: Search Index Optimization (Cache)
     private static final Map<String, List<String>> TOKEN_CACHE = new HashMap<>();
 
+    // NEW: Inverted Index for massive performance boost
+    private static List<Medicine> lastIndexedCatalog = null;
+    private static final Map<String, Set<Medicine>> INVERTED_INDEX = new HashMap<>();
+    private static final Map<String, Set<Medicine>> NUMERIC_INDEX = new HashMap<>();
+
     private MedicineMatcher() {}
+
+    /**
+     * Pre-builds an inverted index for the medicine catalog.
+     * Call this when the catalog is loaded or updated.
+     */
+    private static synchronized void ensureIndexed(List<Medicine> medicines) {
+        if (medicines == null || medicines == lastIndexedCatalog) return;
+
+        PerformanceProfiler.start("Matcher Indexing");
+        LogUtils.d("REBUILDING_MEDICINE_INDEX for " + medicines.size() + " items");
+        
+        INVERTED_INDEX.clear();
+        NUMERIC_INDEX.clear();
+        TOKEN_CACHE.clear();
+        
+        for (Medicine m : medicines) {
+            Set<String> tokens = new HashSet<>();
+            tokens.addAll(tokenize(m.getName()));
+            for (String kw : m.getSearchKeywords()) {
+                tokens.addAll(tokenize(kw));
+            }
+            if (m.getCompany() != null) {
+                tokens.addAll(tokenize(m.getCompany()));
+            }
+
+            for (String token : tokens) {
+                String lowerToken = token.toLowerCase(Locale.ROOT);
+                INVERTED_INDEX.computeIfAbsent(lowerToken, k -> new HashSet<>()).add(m);
+                
+                // 🚀 OPTIMIZATION: Index numeric parts separately for fast lookup
+                if (lowerToken.matches(".*\\d.*")) {
+                    String numbersOnly = lowerToken.replaceAll("[^0-9]", "");
+                    if (!numbersOnly.isEmpty()) {
+                        NUMERIC_INDEX.computeIfAbsent(numbersOnly, k -> new HashSet<>()).add(m);
+                    }
+                }
+            }
+        }
+        lastIndexedCatalog = medicines;
+        PerformanceProfiler.end("Matcher Indexing");
+    }
 
     /**
      * Internal candidate class for sorting results by score.
@@ -70,10 +117,19 @@ public final class MedicineMatcher {
         }
     }
 
+    private static int totalTokenComparisons = 0;
+    private static int totalLevenshteinOperations = 0;
+
     public static MatchResult match(String normalizedText, List<Medicine> medicines) {
         if (normalizedText == null || normalizedText.trim().isEmpty() || medicines == null || medicines.isEmpty()) {
             return MatchResult.none(normalizedText);
         }
+
+        PerformanceProfiler.start("Medicine Matcher");
+        ensureIndexed(medicines);
+        
+        totalTokenComparisons = 0;
+        totalLevenshteinOperations = 0;
 
         String cleanedOcr = cleanOcrText(normalizedText);
         List<String> ocrTokens = tokenize(cleanedOcr);
@@ -84,19 +140,59 @@ public final class MedicineMatcher {
         LogUtils.d("CLEANED_OCR: " + cleanedOcr);
         LogUtils.d("OCR_TOKENS: " + ocrTokens);
 
-        if (ocrTokens.isEmpty()) return MatchResult.none(normalizedText);
+        if (ocrTokens.isEmpty()) {
+            PerformanceProfiler.end("Medicine Matcher");
+            return MatchResult.none(normalizedText);
+        }
+
+        // 🚀 OPTIMIZATION: Use inverted index to find candidate medicines
+        Set<Medicine> candidateSet = new HashSet<>();
+        for (String ocrToken : ocrTokens) {
+            String lowerToken = ocrToken.toLowerCase(Locale.ROOT);
+            
+            // 1. Exact Token Match
+            Set<Medicine> matches = INVERTED_INDEX.get(lowerToken);
+            if (matches != null) {
+                candidateSet.addAll(matches);
+            }
+            
+            // 2. 🚀 FAST NUMERIC LOOKUP
+            if (lowerToken.matches(".*\\d.*")) {
+                String numbersOnly = lowerToken.replaceAll("[^0-9]", "");
+                if (!numbersOnly.isEmpty()) {
+                    Set<Medicine> numMatches = NUMERIC_INDEX.get(numbersOnly);
+                    if (numMatches != null) {
+                        candidateSet.addAll(numMatches);
+                    }
+                }
+            }
+        }
+
+        // If no candidates found through exact/substring, we might need a broader search
+        // but for performance, we limit this.
+        if (candidateSet.isEmpty()) {
+             LogUtils.w("No candidates found via index. Performing full scan (emergency fallback)");
+             candidateSet.addAll(medicines);
+        }
 
         List<Candidate> candidates = new ArrayList<>();
-
-        for (Medicine medicine : medicines) {
+        int keywordCount = 0;
+        for (Medicine medicine : candidateSet) {
+            keywordCount += medicine.getSearchKeywords().size();
             float score = calculateScore(ocrTokens, medicine);
             if (score > 0.05f) {
                 candidates.add(new Candidate(medicine, score));
             }
         }
 
+        PerformanceProfiler.log("Medicine Matcher", "Medicines Compared: " + candidateSet.size() + " / " + medicines.size());
+        PerformanceProfiler.log("Medicine Matcher", "Keywords Compared: " + keywordCount);
+        PerformanceProfiler.log("Medicine Matcher", "Total Token Comparisons: " + totalTokenComparisons);
+        PerformanceProfiler.log("Medicine Matcher", "Levenshtein Operations: " + totalLevenshteinOperations);
+
         if (candidates.isEmpty()) {
             LogUtils.w("MATCH_FAILED: No candidates found.");
+            PerformanceProfiler.end("Medicine Matcher");
             return MatchResult.none(normalizedText);
         }
 
@@ -107,6 +203,9 @@ public final class MedicineMatcher {
         logTopCandidates(candidates);
 
         Candidate top = candidates.get(0);
+        PerformanceProfiler.log("Medicine Matcher", "Best Candidate: " + top.medicine.getName());
+
+        PerformanceProfiler.start("Confidence Calculation");
         float confidence = top.score;
 
         // Step 10: Close Score Protection
@@ -123,12 +222,18 @@ public final class MedicineMatcher {
         LogUtils.i(String.format(Locale.US, "FINAL_DECISION: %s (Confidence: %.2f)", 
                 top.medicine.getName(), confidence));
 
+        PerformanceProfiler.log("Confidence Calculation", "Final Confidence: " + confidence);
+        PerformanceProfiler.log("Confidence Calculation", "Threshold: " + MIN_CONFIDENCE_THRESHOLD);
+        PerformanceProfiler.end("Confidence Calculation");
+
         // Step 11: Confidence Thresholding (Trust-First Logic)
         if (confidence < MIN_CONFIDENCE_THRESHOLD) {
             LogUtils.w(String.format(Locale.US, "MATCH_REJECTED: Confidence %.2f below threshold %.2f.", confidence, MIN_CONFIDENCE_THRESHOLD));
+            PerformanceProfiler.end("Medicine Matcher");
             return MatchResult.none(normalizedText);
         }
 
+        PerformanceProfiler.end("Medicine Matcher");
         // Return appropriate MatchResult based on confidence levels (Step 11)
         if (confidence >= HIGH_CONFIDENCE_THRESHOLD) {
             return MatchResult.exact(top.medicine, normalizedText);
@@ -290,6 +395,7 @@ public final class MedicineMatcher {
             boolean isGeneric = GENERIC_TOKENS.contains(target.toLowerCase(Locale.ROOT));
 
             for (String ocr : ocrTokens) {
+                totalTokenComparisons++;
                 // Exact Match
                 if (ocr.equalsIgnoreCase(target)) {
                     score += weight;
@@ -366,16 +472,32 @@ public final class MedicineMatcher {
     }
 
     private static int levenshteinDistance(String s1, String s2) {
-        int[][] dp = new int[s1.length() + 1][s2.length() + 1];
-        for (int i = 0; i <= s1.length(); i++) dp[i][0] = i;
-        for (int j = 0; j <= s2.length(); j++) dp[0][j] = j;
-        for (int i = 1; i <= s1.length(); i++) {
-            for (int j = 1; j <= s2.length(); j++) {
-                int cost = (s1.charAt(i - 1) == s2.charAt(j - 1)) ? 0 : 1;
-                dp[i][j] = Math.min(Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1), dp[i - 1][j - 1] + cost);
+        totalLevenshteinOperations++;
+        int n = s1.length();
+        int m = s2.length();
+        if (n == 0) return m;
+        if (m == 0) return n;
+
+        // Space optimization: use two rows instead of a full matrix
+        int[] p = new int[n + 1]; // 'previous' cost array, horizontally
+        int[] d = new int[n + 1]; // cost array, horizontally
+
+        for (int i = 0; i <= n; i++) p[i] = i;
+
+        for (int j = 1; j <= m; j++) {
+            char s2_j = s2.charAt(j - 1);
+            d[0] = j;
+            for (int i = 1; i <= n; i++) {
+                int cost = s1.charAt(i - 1) == s2_j ? 0 : 1;
+                // minimum of cell to the left+1, to the top+1, diagonally left and up +cost
+                d[i] = Math.min(Math.min(d[i - 1] + 1, p[i] + 1), p[i - 1] + cost);
             }
+            // copy current distance counts to 'previous row' distance counts
+            int[] temp = p;
+            p = d;
+            d = temp;
         }
-        return dp[s1.length()][s2.length()];
+        return p[n];
     }
 
     private static String cleanOcrText(String text) {

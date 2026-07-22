@@ -9,6 +9,8 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 
 import com.agrovision.kiosk.util.LogUtils;
+import com.agrovision.kiosk.util.PerformanceProfiler;
+import com.agrovision.kiosk.threading.RecognitionExecutor;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
@@ -50,29 +52,38 @@ public final class OcrProcessor {
             return;
         }
 
+        PerformanceProfiler.log("OCR", "OCR Engine Started");
         try {
             InputImage image = InputImage.fromBitmap(bitmap, 0);
 
             recognizer.process(image)
-                    .addOnSuccessListener(result -> {
+                    .addOnSuccessListener(RecognitionExecutor.get(), result -> {
+                        PerformanceProfiler.checkpoint("OCR", "OCR Callback Received");
+                        PerformanceProfiler.log("OCR", "Recognized Characters: " + (result != null ? result.getText().length() : 0));
                         String rawText = extractText(result);
                         
+                        PerformanceProfiler.start("OCR Cleaning");
+                        PerformanceProfiler.start("Text Normalization");
                         String cleaned = TextCleaner.clean(rawText);
                         String normalized = TextNormalizer.normalize(cleaned);
+                        PerformanceProfiler.end("Text Normalization");
+                        PerformanceProfiler.end("OCR Cleaning");
 
                         isProcessing.set(false);
-                        // 🚀 Execute callback on the ML Kit background thread to avoid UI blockage
+                        PerformanceProfiler.end("OCR");
                         callback.onResult(normalized);
                     })
-                    .addOnFailureListener(e -> {
+                    .addOnFailureListener(RecognitionExecutor.get(), e -> {
                         LogUtils.e("OCR Process failed", e);
                         isProcessing.set(false);
+                        PerformanceProfiler.end("OCR");
                         callback.onResult("");
                     });
 
         } catch (Exception e) {
             LogUtils.e("OCR Exception", e);
             isProcessing.set(false);
+            PerformanceProfiler.end("OCR");
             mainHandler.post(() -> callback.onResult(""));
         }
     }

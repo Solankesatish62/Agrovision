@@ -383,26 +383,27 @@ const Dashboard = () => {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: isSidebarCollapsed ? 'center' : 'space-between', padding: '0 12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <div style={{
-                width: '40px',
-                height: '40px',
-                backgroundColor: COLORS.primary,
-                borderRadius: '10px',
+                width: '42px',
+                height: '42px',
+                background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.primaryLight})`,
+                borderRadius: '12px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: 'white',
-                fontWeight: 'bold',
-                fontSize: '20px',
-                minWidth: '40px'
-            }}>A</div>
-            {!isSidebarCollapsed && <h1 style={{ color: COLORS.primary, margin: 0, fontSize: '20px', fontWeight: '800', letterSpacing: '-0.5px' }}>AgroVision</h1>}
+                boxShadow: '0 4px 12px rgba(30, 58, 138, 0.2)',
+                minWidth: '42px'
+            }}>
+              <i className="fas fa-seedling" style={{ fontSize: '20px' }}></i>
+            </div>
+            {!isSidebarCollapsed && <h1 style={{ color: COLORS.primary, margin: 0, fontSize: '22px', fontWeight: '800', letterSpacing: '-0.025em' }}>AgroVision</h1>}
           </div>
           {!isSidebarCollapsed && (
             <button
               onClick={() => setIsSidebarCollapsed(true)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: COLORS.textMuted }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: COLORS.textMuted, padding: '8px' }}
             >
-              ◀
+              <i className="fas fa-chevron-left"></i>
             </button>
           )}
         </div>
@@ -420,27 +421,28 @@ const Dashboard = () => {
                     backgroundColor: COLORS.white,
                     border: `1px solid ${COLORS.border}`,
                     cursor: 'pointer',
-                    boxShadow: SHADOWS.sm,
+                    boxShadow: SHADOWS.md,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontSize: '12px',
-                    color: COLORS.primary
+                    fontSize: '10px',
+                    color: COLORS.primary,
+                    zIndex: 10
                 }}
             >
-                ▶
+                <i className="fas fa-chevron-right"></i>
             </button>
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {!isSidebarCollapsed && <p style={{ fontSize: '12px', fontWeight: '700', color: COLORS.textMuted, padding: '0 12px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' }}>Menu</p>}
-          <NavButton active={activeView === 'monitoring'} onClick={() => setActiveView('monitoring')} label="Monitoring" icon="📊" isCollapsed={isSidebarCollapsed} />
-          <NavButton active={activeView === 'onboarding'} onClick={() => setActiveView('onboarding')} label="Retail Partners" icon="🏪" isCollapsed={isSidebarCollapsed} />
-          <NavButton active={activeView === 'medicines'} onClick={() => setActiveView('medicines')} label="Medicine Catalog" icon="🌿" isCollapsed={isSidebarCollapsed} />
-          <NavButton active={activeView === 'ai-wizard'} onClick={() => setActiveView('ai-wizard')} label="AI Wizard" icon="✨" isCollapsed={isSidebarCollapsed} />
-          <NavButton active={activeView === 'database'} onClick={() => setActiveView('database')} label="Database" icon="🗄️" isCollapsed={isSidebarCollapsed} />
-          <NavButton active={activeView === 'incomplete'} onClick={() => setActiveView('incomplete')} label="Data Health" icon="🩺" isCollapsed={isSidebarCollapsed} />
-          <NavButton active={activeView === 'updates'} onClick={() => setActiveView('updates')} label="App Releases" icon="🚀" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'monitoring'} onClick={() => setActiveView('monitoring')} label="Monitoring" icon="fa-chart-line" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'onboarding'} onClick={() => setActiveView('onboarding')} label="Retail Partners" icon="fa-store" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'medicines'} onClick={() => setActiveView('medicines')} label="Medicine Catalog" icon="fa-pills" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'ai-wizard'} onClick={() => setActiveView('ai-wizard')} label="AI Wizard" icon="fa-wand-magic-sparkles" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'database'} onClick={() => setActiveView('database')} label="Database" icon="fa-database" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'incomplete'} onClick={() => setActiveView('incomplete')} label="Data Health" icon="fa-stethoscope" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'updates'} onClick={() => setActiveView('updates')} label="App Releases" icon="fa-rocket" isCollapsed={isSidebarCollapsed} />
         </div>
 
         {!isSidebarCollapsed && (
@@ -476,10 +478,10 @@ const Dashboard = () => {
 
         {/* Global Stats */}
         <div style={{ display: 'flex', gap: '24px', marginBottom: '40px' }}>
-          <Card title="Online Status" value={`${derivedStats.online} / ${derivedStats.total}`} color={COLORS.secondary} icon="📶" />
-          <Card title="Total Partners" value={derivedStats.totalShops} color={COLORS.primary} icon="🏢" />
-          <Card title="Catalog Size" value={medicines.length} color={COLORS.accent} icon="📦" />
-          <Card title="Health Issues" value={incompleteMedicines.length} color={COLORS.danger} icon="🚨" />
+          <Card title="Online Status" value={`${derivedStats.online} / ${derivedStats.total}`} color={COLORS.secondary} icon="fa-signal" />
+          <Card title="Total Partners" value={derivedStats.totalShops} color={COLORS.primary} icon="fa-building" />
+          <Card title="Catalog Size" value={medicines.length} color={COLORS.accent} icon="fa-box-open" />
+          <Card title="Health Issues" value={incompleteMedicines.length} color={COLORS.danger} icon="fa-triangle-exclamation" />
         </div>
 
         {/* Active View Rendering */}

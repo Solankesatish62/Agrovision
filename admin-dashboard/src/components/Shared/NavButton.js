@@ -28,7 +28,9 @@ const NavButton = ({ active, onClick, label, icon, isCollapsed }) => (
       marginBottom: '4px'
     }}
   >
-    <span style={{ fontSize: '20px', minWidth: '24px', display: 'flex', justifyContent: 'center' }}>{icon}</span>
+    <span style={{ fontSize: '18px', minWidth: '24px', display: 'flex', justifyContent: 'center' }}>
+      {icon.startsWith('fa-') ? <i className={`fas ${icon}`}></i> : icon}
+    </span>
     {!isCollapsed && <span style={{ opacity: 1, transition: 'opacity 0.2s' }}>{label}</span>}
   </button>
 );

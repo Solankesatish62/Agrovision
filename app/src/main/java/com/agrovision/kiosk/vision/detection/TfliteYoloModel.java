@@ -8,8 +8,17 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 
+import com.agrovision.kiosk.util.PerformanceProfiler;
+import com.agrovision.kiosk.util.InferenceInvestigator;
+import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.Tensor;
+import org.tensorflow.lite.gpu.GpuDelegate;
 import org.tensorflow.lite.nnapi.NnApiDelegate;
+import org.tensorflow.lite.support.common.ops.NormalizeOp;
+import org.tensorflow.lite.support.image.ImageProcessor;
+import org.tensorflow.lite.support.image.TensorImage;
+import org.tensorflow.lite.support.image.ops.ResizeOp;
 
 import java.io.FileInputStream;
 import java.nio.ByteBuffer;
@@ -23,10 +32,11 @@ import java.util.List;
 
 public final class TfliteYoloModel implements YoloModel, AutoCloseable {
 
-    private static final String DEFAULT_MODEL_PATH = "models/best_float32.tflite";
+    private static final String DEFAULT_MODEL_PATH = "models/best_full_integer_quant.tflite";
 
     private final Interpreter interpreter;
     private NnApiDelegate nnApiDelegate = null;
+    private GpuDelegate gpuDelegate = null;
 
     private final int inputWidth;
     private final int inputHeight;
@@ -40,6 +50,18 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
     private final float[][][] outputBuffer;
     private final int[] pixelBuffer;
 
+    private final boolean isInputQuantized;
+    private final float inputScale;
+    private final int inputZeroPoint;
+
+    private final boolean isOutputQuantized;
+    private final float outputScale;
+    private final int outputZeroPoint;
+    private final byte[][][] quantizedOutputBuffer;
+
+    private final ImageProcessor imageProcessor;
+    private final TensorImage tensorImage;
+
     public TfliteYoloModel(@NonNull Context context) {
         this(context, DEFAULT_MODEL_PATH);
     }
@@ -49,25 +71,75 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
         try {
             MappedByteBuffer model = loadModel(context.getApplicationContext(), assetPath);
 
-            Interpreter.Options options = new Interpreter.Options();
-            // 🚀 SPEED FIX: Use 4 CPU threads + XNNPACK + NNAPI for high-speed inference
-            options.setNumThreads(4);
-            options.setUseXNNPACK(true);
-            options.setUseNNAPI(true); // Enable Hardware Acceleration for Kiosk CPU/GPU
+            long allocStart = System.currentTimeMillis();
+            
+            // 🚀 FAIL-SAFE INITIALIZATION
+            Interpreter tempInterpreter = null;
+            try {
+                // Try GPU first
+                Interpreter.Options gpuOptions = new Interpreter.Options();
+                GpuDelegate.Options gOpts = new GpuDelegate.Options();
+                gOpts.setInferencePreference(GpuDelegate.Options.INFERENCE_PREFERENCE_SUSTAINED_SPEED);
+                gpuDelegate = new GpuDelegate(gOpts);
+                gpuOptions.addDelegate(gpuDelegate);
+                
+                tempInterpreter = new Interpreter(model, gpuOptions);
+                Log.i("YOLO_MODEL", "GPU Acceleration enabled successfully.");
+            } catch (Exception e) {
+                Log.w("YOLO_MODEL", "GPU failed (No shader support?), falling back to CPU: " + e.getMessage());
+                if (gpuDelegate != null) {
+                    gpuDelegate.close();
+                    gpuDelegate = null;
+                }
+                
+                // Fallback to CPU + XNNPACK
+                Interpreter.Options cpuOptions = new Interpreter.Options();
+                cpuOptions.setNumThreads(4);
+                cpuOptions.setUseXNNPACK(true);
+                
+                // Optional: Try NNAPI as a middle ground
+                try {
+                    nnApiDelegate = new NnApiDelegate();
+                    cpuOptions.addDelegate(nnApiDelegate);
+                } catch (Exception ex) {
+                    Log.w("YOLO_MODEL", "NNAPI fallback also failed, using pure CPU.");
+                }
+                
+                tempInterpreter = new Interpreter(model, cpuOptions);
+            }
 
-            interpreter = new Interpreter(model, options);
+            interpreter = tempInterpreter;
+            interpreter.allocateTensors();
+            InferenceInvestigator.setAllocationTime(System.currentTimeMillis() - allocStart);
 
-            int[] inputShape = interpreter.getInputTensor(0).shape();
+            // 🚀 INVESTIGATION: LOG CONFIG & HARDWARE
+            InferenceInvestigator.logInterpreterConfig(4, true, true);
+            InferenceInvestigator.logHardwareInfo(context);
+
+            AssetFileDescriptor fd = context.getAssets().openFd(assetPath);
+            InferenceInvestigator.logModelInfo(assetPath, fd.getDeclaredLength(), interpreter);
+            fd.close();
+
+            Tensor inputTensor = interpreter.getInputTensor(0);
+            int[] inputShape = inputTensor.shape();
             inputHeight = inputShape[1];
             inputWidth = inputShape[2];
+            isInputQuantized = inputTensor.dataType() != DataType.FLOAT32;
+            inputScale = inputTensor.quantizationParams().getScale();
+            inputZeroPoint = inputTensor.quantizationParams().getZeroPoint();
+
+            Tensor outputTensor = interpreter.getOutputTensor(0);
+            int[] outputShape = outputTensor.shape();
+            isOutputQuantized = outputTensor.dataType() != DataType.FLOAT32;
+            outputScale = outputTensor.quantizationParams().getScale();
+            outputZeroPoint = outputTensor.quantizationParams().getZeroPoint();
 
             // 🚀 STEP 5: PRE-ALLOCATE BUFFERS (AVOID RE-ALLOCATION)
-            inputBuffer = ByteBuffer.allocateDirect(4 * inputWidth * inputHeight * 3)
+            int bytesPerElement = isInputQuantized ? 1 : 4;
+            inputBuffer = ByteBuffer.allocateDirect(bytesPerElement * inputWidth * inputHeight * 3)
                     .order(ByteOrder.nativeOrder());
 
             pixelBuffer = new int[inputWidth * inputHeight];
-
-            int[] outputShape = interpreter.getOutputTensor(0).shape();
 
             if (outputShape[1] > outputShape[2]) {
                 numBoxes = outputShape[1];
@@ -80,6 +152,33 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
             }
 
             outputBuffer = new float[1][valuesPerBox][numBoxes];
+            if (isOutputQuantized) {
+                quantizedOutputBuffer = new byte[1][valuesPerBox][numBoxes];
+            } else {
+                quantizedOutputBuffer = null;
+            }
+
+            // 🚀 STRATEGIC OPTIMIZATION: Initialize ImageProcessor for fast preprocessing
+            ImageProcessor.Builder builder = new ImageProcessor.Builder()
+                    .add(new ResizeOp(inputHeight, inputWidth, ResizeOp.ResizeMethod.BILINEAR));
+            
+            if (!isInputQuantized) {
+                // For float models, normalize to [0, 1]
+                builder.add(new NormalizeOp(0f, 255f));
+                tensorImage = new TensorImage(DataType.FLOAT32);
+            } else {
+                // For quantized models, UINT8 is usually preferred
+                tensorImage = new TensorImage(DataType.UINT8);
+            }
+            imageProcessor = builder.build();
+
+            PerformanceProfiler.log("YOLO Model", "Model Name: " + assetPath);
+            PerformanceProfiler.log("YOLO Model", "Input Shape: [" + inputHeight + ", " + inputWidth + "]");
+            PerformanceProfiler.log("YOLO Model", "Output Shape: " + java.util.Arrays.toString(outputShape));
+            PerformanceProfiler.log("YOLO Model", "Quantized: " + isInputQuantized);
+            PerformanceProfiler.log("YOLO Model", "Threads: 4");
+            PerformanceProfiler.log("YOLO Model", "XNNPACK: true");
+            PerformanceProfiler.log("YOLO Model", "NNAPI: true");
 
         } catch (Exception e) {
             throw new IllegalStateException("YOLO init failed", e);
@@ -92,22 +191,41 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
         if (bitmap == null) return Collections.emptyList();
 
         try {
-            long start = System.currentTimeMillis();
-            
-            // 🚀 STEP 1: RESIZE TO MODEL INPUT SIZE
+            // 🚀 STEP 1: PREPROCESSING (RESIZE + NORMALIZE)
             preprocess(bitmap);
             
-            long prep = System.currentTimeMillis();
-            
-            interpreter.run(inputBuffer, outputBuffer);
+            long start = System.currentTimeMillis();
+            PerformanceProfiler.start("Interpreter.run()");
+            if (isOutputQuantized) {
+                interpreter.run(inputBuffer, quantizedOutputBuffer);
+                // Dequantize
+                for (int v = 0; v < valuesPerBox; v++) {
+                    for (int n = 0; n < numBoxes; n++) {
+                        outputBuffer[0][v][n] = (quantizedOutputBuffer[0][v][n] - outputZeroPoint) * outputScale;
+                    }
+                }
+            } else {
+                interpreter.run(inputBuffer, outputBuffer);
+            }
+            PerformanceProfiler.end("Interpreter.run()");
+            long duration = System.currentTimeMillis() - start;
 
-            long infer = System.currentTimeMillis();
+            // 🚀 INVESTIGATION: RECORD RUN
+            InferenceInvestigator.recordInference(duration);
             
+            PerformanceProfiler.start("Output Tensor Read");
+            // No explicit read needed for float[][][], it's filled by run()
+            PerformanceProfiler.end("Output Tensor Read");
+
+            PerformanceProfiler.start("Decode Predictions");
             List<RawDetection> raw = parseOutput(bitmap.getWidth(), bitmap.getHeight());
-            
-            Log.d("YOLO_PERF", String.format("Prep: %dms, Infer: %dms", (prep - start), (infer - prep)));
+            PerformanceProfiler.end("Decode Predictions");
 
-            return applyNms(raw, 0.45f);
+            PerformanceProfiler.start("NMS");
+            List<RawDetection> result = applyNms(raw, 0.45f);
+            PerformanceProfiler.end("NMS");
+
+            return result;
 
         } catch (Exception e) {
             return Collections.emptyList();
@@ -117,23 +235,20 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
     /* ================= PREPROCESS ================= */
 
     private void preprocess(Bitmap bitmap) {
-        // 🚀 OPTIMIZATION: Use scaled pixels directly if possible
-        Bitmap resized = Bitmap.createScaledBitmap(bitmap, inputWidth, inputHeight, false);
+        PerformanceProfiler.start("Image Preprocessing");
         
-        resized.getPixels(pixelBuffer, 0, inputWidth, 0, 0, inputWidth, inputHeight);
-
+        // 🚀 OPTIMIZATION: Use TFLite Support Library's ImageProcessor (Native/Optimized)
+        // This replaces the manual slow Java loops for resize and normalization.
+        tensorImage.load(bitmap);
+        TensorImage processedImage = imageProcessor.process(tensorImage);
+        
         inputBuffer.rewind();
-        // 🚀 SPEED UP: Avoid division in the loop, use multiplication
-        float normalizer = 1.0f / 255.0f;
-        for (int p : pixelBuffer) {
-            inputBuffer.putFloat(((p >> 16) & 0xFF) * normalizer);
-            inputBuffer.putFloat(((p >> 8) & 0xFF) * normalizer);
-            inputBuffer.putFloat((p & 0xFF) * normalizer);
-        }
-
-        if (resized != bitmap) {
-            resized.recycle();
-        }
+        ByteBuffer processedBuffer = processedImage.getBuffer();
+        processedBuffer.rewind();
+        inputBuffer.put(processedBuffer);
+        
+        PerformanceProfiler.end("Image Preprocessing");
+        PerformanceProfiler.log("Image Preprocessing", "Original: " + bitmap.getWidth() + "x" + bitmap.getHeight() + " -> " + inputWidth + "x" + inputHeight);
     }
 
     /* ================= OUTPUT PARSING ================= */
@@ -141,8 +256,10 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
     private List<RawDetection> parseOutput(int srcW, int srcH) {
 
         List<RawDetection> detections = new ArrayList<>();
+        int boxesDecoded = 0;
 
         for (int i = 0; i < numBoxes; i++) {
+            boxesDecoded++;
             // 🚀 CLASS-AGNOSTIC FIX: Find the highest confidence across all class indices
             // Coordinates are typically indices 0,1,2,3. Classes start at index 4.
             float maxConf = 0f;
@@ -179,6 +296,9 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
             detections.add(new RawDetection(left, top, right, bottom, maxConf, bestClass));
         }
 
+        PerformanceProfiler.log("Decode Predictions", "Boxes Decoded: " + boxesDecoded);
+        PerformanceProfiler.log("Decode Predictions", "Classes: " + (valuesPerBox - 4));
+
         return detections;
     }
 
@@ -192,6 +312,7 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
 
     private List<RawDetection> applyNms(List<RawDetection> input, float iouThreshold) {
 
+        int boxesBefore = input.size();
         input.sort(Comparator.comparingDouble(RawDetection::confidence).reversed());
 
         List<RawDetection> result = new ArrayList<>();
@@ -206,6 +327,10 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
             }
             if (keep) result.add(candidate);
         }
+        
+        PerformanceProfiler.log("NMS", "Boxes Before: " + boxesBefore);
+        PerformanceProfiler.log("NMS", "Boxes After: " + result.size());
+
         return result;
     }
 
@@ -231,6 +356,9 @@ public final class TfliteYoloModel implements YoloModel, AutoCloseable {
         }
         if (nnApiDelegate != null) {
             nnApiDelegate.close();
+        }
+        if (gpuDelegate != null) {
+            gpuDelegate.close();
         }
     }
 

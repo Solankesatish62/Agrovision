@@ -42,17 +42,21 @@ const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
 
   const assetSuggestions = useMemo(() => {
     if (!activeDropdown || !storageFiles) return [];
-    const { type } = activeDropdown;
+    const { type, index } = activeDropdown;
     const list = type === 'audio' ? storageFiles.audio : storageFiles.images;
+
+    // 🚀 Dynamic Search: Use current field text if user is typing, fallback to medicine name
+    const currentInput = type === 'images' ? (formData.imageUrls[index] || '') : (formData.audioUrls || '');
+    const isUrl = currentInput.toLowerCase().startsWith('http');
+    const term = (isUrl || !currentInput.trim() ? formData.medicineName : currentInput).trim().toLowerCase();
 
     let availableList = list;
     if (type === 'images') {
-        const selectedUrls = formData.imageUrls.filter(u => u && u.trim() !== '');
+        const selectedUrls = formData.imageUrls.filter((u, idx) => u && u.trim() !== '' && idx !== index);
         availableList = list.filter(f => !selectedUrls.includes(f.url));
     }
 
-    const term = formData.medicineName.trim().toLowerCase();
-    if (!term) return availableList.slice(0, 10);
+    if (!term) return availableList.slice(0, 15);
 
     const cleanTerm = term.replace(/[^a-z0-9]/g, '');
     const termWords = term.split(/[^a-z0-9]+/).filter(w => w.length >= 2);
@@ -107,84 +111,6 @@ const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
     setActiveDropdown(null);
   };
 
-  const generateOcrKeywords = (name, company, chemical) => {
-    const keywords = new Set();
-    const swaps = { 'o': '0', '0': 'o', 'i': '1', '1': 'i', 's': '5', '5': 's', 'b': '8', '8': 'b', 'z': '2', '2': 'z' };
-
-    const cleanEng = (text) => (text || '')
-        .split('(')[0]
-        .replace(/[^\x00-\x7F]/g, '') // Remove non-ASCII
-        .replace(/%/g, '')           // Explicitly remove %
-        .toLowerCase()
-        .trim();
-
-    const addVariants = (text) => {
-      if (!text || text.length < 2) return;
-      const base = text.toLowerCase();
-      keywords.add(base);
-
-      // No symbols, No spaces
-      const alphanumeric = base.replace(/[^a-z0-9]/g, '');
-      if (alphanumeric.length > 1) keywords.add(alphanumeric);
-
-      // Parts & Fragments
-      const parts = base.split(/[^a-z0-9]+/).filter(p => p.length > 1);
-      parts.forEach(p => {
-        keywords.add(p);
-        // Numeric/Alpha split (e.g., R303 -> R, 303)
-        const alpha = p.replace(/[0-9]/g, '');
-        const numeric = p.replace(/[a-z]/g, '');
-        if (alpha.length > 1) keywords.add(alpha);
-        if (numeric.length > 1) keywords.add(numeric);
-      });
-
-      // Character Swaps (OCR Confusion)
-      const applySwaps = (str) => {
-        let chars = str.split('');
-        let results = [];
-        chars.forEach((char, idx) => {
-          if (swaps[char]) {
-            let variant = [...chars];
-            variant[idx] = swaps[char];
-            results.push(variant.join(''));
-          }
-        });
-        return results;
-      };
-
-      if (alphanumeric.length > 1) {
-        applySwaps(alphanumeric).forEach(v => keywords.add(v));
-      }
-    };
-
-    const nameEng = cleanEng(name);
-    addVariants(nameEng);
-
-    // Exact name with common symbol replacements
-    if (nameEng.includes('+')) keywords.add(nameEng.replace('+', 'plus'));
-
-    // Company and Chemical
-    addVariants(cleanEng(company));
-    addVariants(cleanEng(chemical));
-
-    // Handle combinations for name (e.g. bio r 303)
-    const nameParts = nameEng.split(/[^a-z0-9]+/).filter(p => p.length > 0);
-    if (nameParts.length > 1) {
-        keywords.add(nameParts.join(' '));
-        keywords.add(nameParts.join('-'));
-    }
-
-    const filtered = Array.from(keywords).filter(k => k && k.length > 1);
-    // Prioritize: Name-based first, then length (longer/specific first), then others
-    return filtered.sort((a, b) => {
-        const aInName = nameEng.includes(a);
-        const bInName = nameEng.includes(b);
-        if (aInName && !bInName) return -1;
-        if (!aInName && bInName) return 1;
-        return b.length - a.length;
-    }).slice(0, 10); // Strictly top 10 most useful keywords
-  };
-
   const handleSmartPaste = () => {
     if (!smartPasteText.trim()) return;
 
@@ -230,14 +156,6 @@ const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
 
     const usage = extractValue('मात्रा');
     if (usage) newData.usage = usage;
-
-    // Advanced OCR Keyword Generation based on Expert Rules
-    if (name) {
-        const generated = generateOcrKeywords(name, company, chemical);
-        const currentKeywords = newData.ocrKeywords.filter(k => k.trim() !== '');
-        const combined = [...new Set([...generated, ...currentKeywords])];
-        newData.ocrKeywords = padArray(combined, 10); // Increase initial slots
-    }
 
     setFormData(newData);
     setSmartPasteText('');
