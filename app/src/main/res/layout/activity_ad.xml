@@ -12,6 +12,12 @@
         android:scaleType="centerCrop"
         android:contentDescription="Advertisement" />
 
+    <VideoView
+        android:id="@+id/vvAd"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <TextView
         android:id="@+id/tvAdBadge"
         android:layout_width="wrap_content"
@@ -23,7 +29,34 @@
         android:text="पुरस्कृत"
         android:textColor="#FFFFFF"
         android:textSize="14sp"
+        android:elevation="10dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
+
+    <ImageButton
+        android:id="@+id/btnPrevAd"
+        android:layout_width="64dp"
+        android:layout_height="120dp"
+        android:background="#33000000"
+        android:src="@android:drawable/ic_media_previous"
+        android:scaleType="centerInside"
+        android:elevation="10dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:tint="#FFFFFF" />
+
+    <ImageButton
+        android:id="@+id/btnNextAd"
+        android:layout_width="64dp"
+        android:layout_height="120dp"
+        android:background="#33000000"
+        android:src="@android:drawable/ic_media_next"
+        android:scaleType="centerInside"
+        android:elevation="10dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:tint="#FFFFFF" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

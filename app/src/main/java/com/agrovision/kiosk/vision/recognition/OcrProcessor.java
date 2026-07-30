@@ -22,7 +22,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class OcrProcessor {
 
     private final TextRecognizer recognizer;
-    private final AtomicBoolean isProcessing = new AtomicBoolean(false);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     public interface Callback {
@@ -37,20 +36,14 @@ public final class OcrProcessor {
 
     /**
      * 🚀 Optimization 4: Public check to see if OCR is busy.
-     * Used by CameraController to skip YOLO/Stability checks when OCR is already running.
+     * Removed for Phase 1 (Parallel OCR) to allow multiple simultaneous boxes.
      */
     public boolean isBusy() {
-        return isProcessing.get();
+        return false;
     }
 
     public void process(@NonNull Bitmap bitmap,
                         @NonNull Callback callback) {
-
-        if (isProcessing.getAndSet(true)) {
-            Log.w("PIPELINE_TRACE", "OCR Busy - skipping frame");
-            mainHandler.post(() -> callback.onResult(""));
-            return;
-        }
 
         PerformanceProfiler.log("OCR", "OCR Engine Started");
         try {
@@ -69,20 +62,17 @@ public final class OcrProcessor {
                         PerformanceProfiler.end("Text Normalization");
                         PerformanceProfiler.end("OCR Cleaning");
 
-                        isProcessing.set(false);
                         PerformanceProfiler.end("OCR");
                         callback.onResult(normalized);
                     })
                     .addOnFailureListener(RecognitionExecutor.get(), e -> {
                         LogUtils.e("OCR Process failed", e);
-                        isProcessing.set(false);
                         PerformanceProfiler.end("OCR");
                         callback.onResult("");
                     });
 
         } catch (Exception e) {
             LogUtils.e("OCR Exception", e);
-            isProcessing.set(false);
             PerformanceProfiler.end("OCR");
             mainHandler.post(() -> callback.onResult(""));
         }

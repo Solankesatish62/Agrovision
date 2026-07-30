@@ -244,12 +244,29 @@ public final class MedicineRepository {
         });
     }
 
+    private final Map<String, Long> loggedUnknowns = new HashMap<>();
+    private static final long UNKNOWN_LOG_COOLDOWN_MS = 3600_000; // 1 hour
+
     public void logUnknownDetection(String rawOcrText, String imagePath) {
-        long timestamp = System.currentTimeMillis();
+        if (rawOcrText == null || rawOcrText.trim().length() < 3) return;
+
+        long now = System.currentTimeMillis();
+        synchronized (loggedUnknowns) {
+            Long lastLogged = loggedUnknowns.get(rawOcrText);
+            if (lastLogged != null && (now - lastLogged) < UNKNOWN_LOG_COOLDOWN_MS) {
+                return; // Already logged recently
+            }
+            loggedUnknowns.put(rawOcrText, now);
+            // Periodic cleanup
+            if (loggedUnknowns.size() > 100) {
+                loggedUnknowns.entrySet().removeIf(entry -> (now - entry.getValue()) > UNKNOWN_LOG_COOLDOWN_MS);
+            }
+        }
+
         IoExecutor.submit(() -> {
             Map<String, Object> data = new HashMap<>();
             data.put("ocrText", rawOcrText);
-            data.put("timestamp", timestamp);
+            data.put("timestamp", now);
             data.put("status", "pending_review");
             data.put("deviceId", android.os.Build.MODEL);
             data.put("imagePath", imagePath);

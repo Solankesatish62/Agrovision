@@ -15,8 +15,8 @@ import MedicineTable from './components/Medicines/MedicineTable';
 import MedicineForm from './components/Medicines/MedicineForm';
 import BulkMedicineImporter from './components/Medicines/BulkMedicineImporter';
 import IncompleteTable from './components/Medicines/IncompleteTable';
-import AiMedicineWizard from './components/Medicines/AiMedicineWizard';
 import DatabaseManager from './components/Database/DatabaseManager';
+import AdvertisementManager from './components/Ads/AdvertisementManager';
 
 // Firebase Storage
 import { storage } from './firebase';
@@ -90,64 +90,61 @@ const Dashboard = () => {
     return () => unsubscribe();
   }, []);
 
-  // 🚀 App Update Config
+  // 🚀 App Update Config (Real-time)
   useEffect(() => {
-    const fetchUpdateConfig = async () => {
-      const docRef = doc(db, 'app_updates', 'latest');
-      const docSnap = await getDoc(docRef);
+    const docRef = doc(db, 'app_updates', 'latest');
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
         setUpdateConfig(docSnap.data());
       }
-    };
-    fetchUpdateConfig();
+    });
+    return () => unsubscribe();
   }, []);
 
-  // 🚀 Fetch Storage Assets Once
-  useEffect(() => {
-    const viewsThatNeedStorage = ['database', 'medicines', 'ai-wizard', 'incomplete'];
-    if (viewsThatNeedStorage.includes(activeView) && !hasLoadedStorage) {
-      const fetchStorageFiles = async () => {
-        setIsStorageLoading(true);
-        const folders = [
-            { id: 'images', path: 'medicine-images' },
-            { id: 'audio', path: 'medicine-audio' },
-            { id: 'advertisements', path: 'advertisements' }
-        ];
+  // 🚀 Fetch Storage Assets (Now starts on mount for immediate availability)
+  const fetchStorageFiles = async () => {
+    setIsStorageLoading(true);
+    const folders = [
+        { id: 'images', path: 'medicine-images' },
+        { id: 'audio', path: 'medicine-audio' },
+        { id: 'advertisements', path: 'advertisements' }
+    ];
 
-        try {
-            const results = {};
-            for (const folder of folders) {
-                try {
-                    const storageRef = ref(storage, folder.path);
-                    const listResult = await listAll(storageRef);
-                    const filePromises = listResult.items.map(async (item) => {
-                        try {
-                            const url = await getDownloadURL(item);
-                            const metadata = await getMetadata(item);
-                            return {
-                                name: item.name,
-                                fullPath: item.fullPath,
-                                url,
-                                size: metadata.size,
-                                timeCreated: metadata.timeCreated,
-                                contentType: metadata.contentType
-                            };
-                        } catch (e) { return null; }
-                    });
-                    const resolvedFiles = await Promise.all(filePromises);
-                    results[folder.id] = resolvedFiles.filter(f => f !== null);
-                } catch (e) { results[folder.id] = []; }
-            }
-            setStorageFiles(results);
-            setHasLoadedStorage(true);
-        } catch (error) {
-            console.error("Error fetching storage:", error);
+    try {
+        const results = {};
+        for (const folder of folders) {
+            try {
+                const storageRef = ref(storage, folder.path);
+                const listResult = await listAll(storageRef);
+                const filePromises = listResult.items.map(async (item) => {
+                    try {
+                        const url = await getDownloadURL(item);
+                        const metadata = await getMetadata(item);
+                        return {
+                            name: item.name,
+                            fullPath: item.fullPath,
+                            url,
+                            size: metadata.size,
+                            timeCreated: metadata.timeCreated,
+                            contentType: metadata.contentType
+                        };
+                    } catch (e) { return null; }
+                });
+                const resolvedFiles = await Promise.all(filePromises);
+                results[folder.id] = resolvedFiles.filter(f => f !== null);
+            } catch (e) { results[folder.id] = []; }
         }
-        setIsStorageLoading(false);
-      };
-      fetchStorageFiles();
+        setStorageFiles(results);
+        setHasLoadedStorage(true);
+    } catch (error) {
+        console.error("Error fetching storage:", error);
     }
-  }, [activeView, hasLoadedStorage]);
+    setIsStorageLoading(false);
+  };
+
+  useEffect(() => {
+    fetchStorageFiles();
+  }, []);
 
   const handleUpdateSave = async () => {
     setIsSaving(true);
@@ -171,6 +168,8 @@ const Dashboard = () => {
       const dataToSave = {
         name: formData.medicineName,
         company: formData.company || '',
+        cibNo: formData.cibNo || '',
+        chemicalName: formData.chemicalName || '',
         searchKeywords: formData.ocrKeywords.filter(k => k && k.trim() !== ''),
         barcodePrefixes: formData.barcodePrefixes.filter(p => p && p.trim() !== ''),
         crop: formData.crop || '',
@@ -265,8 +264,10 @@ const Dashboard = () => {
         const hasDisease = m.disease || (m.supportedDiseases && m.supportedDiseases.length > 0);
         const hasCompany = m.company && m.company !== 'Unknown';
         const hasAudio = m.audioUrls || m.audiourls;
+        const hasCib = m.cibNo;
+        const hasChemical = m.chemicalName;
 
-        return !hasName || !hasMarathi || !hasKeywords || !hasImages || !hasCrop || !hasDisease || !hasCompany || !hasAudio;
+        return !hasName || !hasMarathi || !hasKeywords || !hasImages || !hasCrop || !hasDisease || !hasCompany || !hasAudio || !hasCib || !hasChemical;
     }).sort((a, b) => (a.name || a.medicineName || "").localeCompare(b.name || b.medicineName || ""));
 
     const term = incompleteSearchTerm.toLowerCase().trim();
@@ -285,7 +286,7 @@ const Dashboard = () => {
 
     return medicines.filter(m => {
       const searchData = [
-        m.name, m.medicineName, m.id, m.company, m.marathiInfo, m.crop, m.disease
+        m.name, m.medicineName, m.id, m.company, m.marathiInfo, m.crop, m.disease, m.cibNo, m.chemicalName
       ].join(" ").toLowerCase();
       return searchData.includes(term);
     }).sort((a, b) => {
@@ -323,9 +324,9 @@ const Dashboard = () => {
     const viewMap = {
       'monitoring': <MonitoringTable kiosks={visibleKiosks} scans={scans} formatTimestamp={formatTimestamp} />,
       'onboarding': <OnboardingTable shops={shops} formatTimestamp={formatTimestamp} onDelete={handleDeleteShop} />,
-      'database': <DatabaseManager files={storageFiles} loading={isStorageLoading} />,
+      'database': <DatabaseManager files={storageFiles} loading={isStorageLoading} onRefresh={fetchStorageFiles} />,
       'medicines': <MedicineTable medicines={filteredMedicines} searchTerm={searchTerm} setSearchTerm={setSearchTerm} onAdd={openAddForm} onEdit={openEditForm} onDelete={handleDeleteMedicine} onBulk={() => setActiveView('bulk-import')} />,
-      'ai-wizard': <AiMedicineWizard />,
+      'ads': <AdvertisementManager shops={shops} storageFiles={storageFiles} />,
       'bulk-import': <BulkMedicineImporter existingMedicines={medicines} onSaveAll={handleSaveBulkMedicines} onCancel={() => setActiveView('medicines')} />,
       'incomplete': <IncompleteTable medicines={incompleteMedicines} searchTerm={incompleteSearchTerm} setSearchTerm={setIncompleteSearchTerm} onEdit={openEditForm} />,
       'updates': <AppUpdatesView config={updateConfig} setConfig={setUpdateConfig} onSave={handleUpdateSave} isSaving={isSaving} />
@@ -439,7 +440,7 @@ const Dashboard = () => {
           <NavButton active={activeView === 'monitoring'} onClick={() => setActiveView('monitoring')} label="Monitoring" icon="fa-chart-line" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'onboarding'} onClick={() => setActiveView('onboarding')} label="Retail Partners" icon="fa-store" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'medicines'} onClick={() => setActiveView('medicines')} label="Medicine Catalog" icon="fa-pills" isCollapsed={isSidebarCollapsed} />
-          <NavButton active={activeView === 'ai-wizard'} onClick={() => setActiveView('ai-wizard')} label="AI Wizard" icon="fa-wand-magic-sparkles" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'ads'} onClick={() => setActiveView('ads')} label="Ads & Promotions" icon="fa-tv" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'database'} onClick={() => setActiveView('database')} label="Database" icon="fa-database" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'incomplete'} onClick={() => setActiveView('incomplete')} label="Data Health" icon="fa-stethoscope" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'updates'} onClick={() => setActiveView('updates')} label="App Releases" icon="fa-rocket" isCollapsed={isSidebarCollapsed} />
@@ -463,7 +464,7 @@ const Dashboard = () => {
               {activeView === 'medicines' && 'Medicine Catalog'}
               {activeView === 'bulk-import' && 'Bulk Medicine Import'}
               {activeView === 'database' && 'Storage Assets Manager'}
-              {activeView === 'ai-wizard' && 'AI Medicine Assistant'}
+              {activeView === 'ads' && 'Ad Campaign Manager'}
               {activeView === 'incomplete' && 'Data Health Check'}
               {activeView === 'updates' && 'Application Releases'}
             </h2>

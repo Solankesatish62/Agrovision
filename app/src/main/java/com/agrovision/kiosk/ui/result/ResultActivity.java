@@ -240,31 +240,6 @@ public final class ResultActivity extends AppCompatActivity
         stopImageRotation();
         stopAudio();
 
-        // Check if we should show a scan-triggered ad
-        SharedPreferences prefs = getSharedPreferences("scan_stats", MODE_PRIVATE);
-        int successfulCount = prefs.getInt("successful_ad_count", 0);
-
-        if (successfulCount >= 3) {
-            Log.i("AD_DEBUG", "3 successful scans reached. Triggering SCAN_AD.");
-            
-            // Reset counter IMMEDIATELY
-            prefs.edit().putInt("successful_ad_count", 0).apply();
-            
-            // transition BEFORE starting activity
-            StateMachine.getInstance(getApplicationContext()).transition(StateEvent.SCAN_AD_TRIGGERED);
-            
-            Log.d("AD_DEBUG", "Launching AdActivity (SCAN mode)");
-            Intent intent = new Intent(this, AdActivity.class);
-            intent.putExtra(AdActivity.EXTRA_AD_TYPE, AdActivity.AdType.SCAN);
-            intent.putExtra(AdActivity.EXTRA_AD_DURATION, 8000L); // 8 seconds for scan ad
-            startActivity(intent);
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
-            PerformanceProfiler.log("Return Home", "ResultActivity Finish via Ad");
-            PerformanceProfiler.end("Return Home");
-            finish();
-            return;
-        }
-
         StateMachine.getInstance(getApplicationContext())
                 .transition(StateEvent.RESULT_TIMEOUT);
 

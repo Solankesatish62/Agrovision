@@ -2,6 +2,12 @@ import React, { useState, useMemo } from 'react';
 import { labelStyle, inputStyle, exportBtnStyle } from '../Shared/Styles';
 
 const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
+  const cleanDataField = (val) => {
+    if (!val) return '';
+    // Removes sequences of 2 or more dots/dashes/pipes at the end, often used as separators in sources
+    return val.toString().replace(/[\s\-.|_]{2,}$/, '').trim();
+  };
+
   const padArray = (arr, minLength) => {
     const result = Array.isArray(arr) ? [...arr] : [];
     while (result.length < minLength) result.push('');
@@ -11,8 +17,8 @@ const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
   const [formData, setFormData] = useState(medicine ? {
     medicineName: medicine.name || medicine.medicineName || '',
     company: medicine.company || '',
-    cibNo: medicine.cibNo || '',
-    chemicalName: medicine.chemicalName || '',
+    cibNo: cleanDataField(medicine.cibNo),
+    chemicalName: cleanDataField(medicine.chemicalName),
     crop: Array.isArray(medicine.crop) ? medicine.crop.join(', ') : (medicine.supportedCrops && Array.isArray(medicine.supportedCrops) ? medicine.supportedCrops.join(', ') : (medicine.crop || '')),
     disease: Array.isArray(medicine.disease) ? medicine.disease.join(', ') : (medicine.supportedDiseases && Array.isArray(medicine.supportedDiseases) ? medicine.supportedDiseases.join(', ') : (medicine.disease || '')),
     usage: medicine.usage || medicine.usageInstructions || '',
@@ -39,6 +45,22 @@ const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
   const [bulkOcr, setBulkOcr] = useState('');
   const [smartPasteText, setSmartPasteText] = useState('');
   const [activeDropdown, setActiveDropdown] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyData = () => {
+    const textToCopy = `Medicine Name (Unique ID): ${formData.medicineName}
+Manufacturing Company: ${formData.company}
+CIB&RC Registration Number: ${formData.cibNo}
+Chemical Composition / Name: ${formData.chemicalName}
+Target Crops: ${formData.crop}
+Target Diseases/Pests: ${formData.disease}
+Marathi Information (Farmer Facing): ${formData.marathiInfo}
+Usage Instructions (English): ${formData.usage}`;
+
+    navigator.clipboard.writeText(textToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const assetSuggestions = useMemo(() => {
     if (!activeDropdown || !storageFiles) return [];
@@ -123,18 +145,32 @@ const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
         'इतर औषधांसोबत', 'PHI'
     ];
 
+    const labelPattern = labels.map(l => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+
     const extractValue = (targetLabel) => {
       const escapedLabel = targetLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const labelPattern = labels.map(l => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      const regex = new RegExp(`${escapedLabel}\\s*[:：]\\s*((?:.(?!${labelPattern}|[🎯🌱🧪⚡⚠️•]))*)`, 'i');
+      // Enhanced regex to skip bullet points (*, •, -) and handle multi-line content
+      const regex = new RegExp(`(?:^|\\n)\\s*[*•-]?\\s*${escapedLabel}\\s*[:：]\\s*([\\s\\S]*?)(?=\\n\\s*[*•-]?\\s*(?:${labelPattern})\\s*[:：]|[🎯🌱🧪⚡⚠️•]|$)`, 'i');
       const match = smartPasteText.match(regex);
-      return match ? match[1].trim() : null;
+      if (!match) return null;
+
+      let val = match[1].trim();
+      // Remove citation numbers like [1], [2], [1, 2, 3]
+      val = val.replace(/\[\d+(?:,\s*\d+)*\]/g, '');
+
+      // Remove common boilerplate/redundant sentences
+      val = val.replace(/पाठीवरील पंपाने पिकावर संपूर्ण पाने व्यवस्थित भिजतील अशी फवारणी.*?करावी[.]?/g, '');
+      val = val.replace(/पिकावर संपूर्ण पाने व्यवस्थित भिजतील अशी फवारणी करावी[.]?/g, '');
+
+      // Clean up multiple spaces and trailing dashes/punctuation often left behind
+      val = val.replace(/\s+/g, ' ').replace(/[\s\-._|]{2,}$/, '').trim();
+      return val;
     };
 
     const newData = { ...formData };
 
     const name = extractValue('Product Name');
-    if (name && !medicine) newData.medicineName = name;
+    if (name && (!medicine || !formData.medicineName)) newData.medicineName = name;
 
     const company = extractValue('Manufacturer');
     if (company) newData.company = company;
@@ -145,17 +181,31 @@ const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
     const cib = extractValue('CIB&RC Registration Number');
     if (cib) newData.cibNo = cib;
 
-    const crop = extractValue('हे औषध काय काम करतं');
-    if (crop) newData.crop = crop;
+    // Mapping: "हे औषध काय काम करतं" == Target Crops (Description of work)
+    const work = extractValue('हे औषध काय काम करतं');
+    if (work) newData.crop = work;
 
+    // Mapping: "कोणती समस्या सोडवतं" == Target Diseases/Pests
     const disease = extractValue('कोणती समस्या सोडवतं');
     if (disease) newData.disease = disease;
 
-    const marathi = extractValue('कोणत्या पिकावर');
-    if (marathi) newData.marathiInfo = marathi;
+    // Combined Marathi Info: "कोणत्या पिकावर" + "कोणत्या टप्प्यात"
+    const targetCrops = extractValue('कोणत्या पिकावर');
+    const stageInfo = extractValue('कोणत्या टप्प्यात');
+    let marathiParts = [];
+    if (targetCrops) marathiParts.push(`कोणत्या पिकावर: ${targetCrops}`);
+    if (stageInfo) marathiParts.push(`कोणत्या टप्प्यात: ${stageInfo}`);
+    if (marathiParts.length > 0) newData.marathiInfo = marathiParts.join('\n\n');
 
-    const usage = extractValue('मात्रा');
-    if (usage) newData.usage = usage;
+    // Usage Instructions: "मात्रा" + "प्रति एकर" + "कसं वापरायचं"
+    const dose = extractValue('मात्रा');
+    const acre = extractValue('प्रति एकर');
+    const method = extractValue('कसं वापरायचं');
+    let usageParts = [];
+    if (dose) usageParts.push(`मात्रा: ${dose}`);
+    if (acre) usageParts.push(`प्रति एकर: ${acre}`);
+    if (method) usageParts.push(`कसं वापरायचं: ${method}`);
+    if (usageParts.length > 0) newData.usage = usageParts.join('\n');
 
     setFormData(newData);
     setSmartPasteText('');
@@ -316,7 +366,30 @@ const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
 
           {/* Section 1: Basic Info */}
           <div style={sectionStyle}>
-            <h3 style={sectionTitleStyle}>📦 General Information</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
+              <h3 style={{ ...sectionTitleStyle, marginBottom: 0 }}>📦 General Information</h3>
+              <button
+                type="button"
+                onClick={handleCopyData}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: copied ? '#10b981' : '#f1f5f9',
+                  color: copied ? 'white' : '#475569',
+                  border: `1px solid ${copied ? '#10b981' : '#cbd5e1'}`,
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <span>{copied ? '✅' : '📋'}</span>
+                {copied ? 'Copied!' : 'Copy Medicine Data'}
+              </button>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
               <div>
                 <label style={labelStyle}>Medicine Name (Unique ID)</label>

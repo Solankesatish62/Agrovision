@@ -33,13 +33,14 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * CameraController
@@ -79,7 +80,8 @@ public final class CameraController {
     private final AtomicBoolean isProcessingQueue = new AtomicBoolean(false);
     private final AtomicBoolean isDetectionEnabled = new AtomicBoolean(true);
     private final Queue<DetectionResult> pendingDetections = new LinkedList<>();
-    private final Set<String> processedResults = new HashSet<>();
+    private final Set<String> processedResults = ConcurrentHashMap.newKeySet();
+    private final Object pipelineLock = new Object();
     private Bitmap currentProcessingBitmap;
 
     public static CameraController getInstance(@NonNull Context context) {
@@ -150,14 +152,16 @@ public final class CameraController {
      * Should be called when scanning starts/resumes to prevent deadlocks.
      */
     public void resetPipeline() {
-        Log.i("PIPELINE_TRACE", "Resetting vision pipeline status");
-        isProcessingQueue.set(false);
-        PerformanceProfiler.unlock();
-        pendingDetections.clear();
-        processedResults.clear();
-        if (currentProcessingBitmap != null) {
-            BitmapUtils.safeRecycle(currentProcessingBitmap);
-            currentProcessingBitmap = null;
+        synchronized (pipelineLock) {
+            Log.i("PIPELINE_TRACE", "Resetting vision pipeline status");
+            isProcessingQueue.set(false);
+            PerformanceProfiler.unlock();
+            pendingDetections.clear();
+            processedResults.clear();
+            if (currentProcessingBitmap != null) {
+                BitmapUtils.safeRecycle(currentProcessingBitmap);
+                currentProcessingBitmap = null;
+            }
         }
     }
 
@@ -210,7 +214,7 @@ public final class CameraController {
 
     private long lastProcessTime = 0;
     private long lastPreviewFrameTime = 0;
-    private static final long PROCESS_THROTTLE_MS = 100; // 🚀 Reduced from 200ms to 100ms for "instant" feel
+    private static final long PROCESS_THROTTLE_MS = 200; // 🚀 Increased to 200ms to prevent GC-related crashes on low-end hardware.
 
     private void handleFrame(@NonNull ImageProxy image) {
         lastPreviewFrameTime = System.currentTimeMillis();
@@ -299,15 +303,13 @@ public final class CameraController {
                     validDetections.sort((a, b) -> Float.compare(b.getConfidence(), a.getConfidence()));
                     int limit = Math.min(validDetections.size(), 3);
                     
-                    pendingDetections.clear();
-                    processedResults.clear();
-                    
+                    List<DetectionResult> targetDetections = new ArrayList<>();
                     for (int i = 0; i < limit; i++) {
-                        pendingDetections.add(validDetections.get(i));
+                        targetDetections.add(validDetections.get(i));
                     }
                     
                     currentProcessingBitmap = bitmap;
-                    processNext();
+                    processDetectionsParallel(targetDetections);
                     return; 
                 } else {
                     isProcessingQueue.set(false);
@@ -321,85 +323,99 @@ public final class CameraController {
         }
     }
 
-    private void processNext() {
-        DetectionResult detection = pendingDetections.poll();
-
-        if (detection == null) {
-            // STEP 6: Queue empty -> return
-            Log.d("PIPELINE_TRACE", "Queue empty, resetting processing flag.");
-            isProcessingQueue.set(false);
-            if (currentProcessingBitmap != null) {
-                BitmapUtils.safeRecycle(currentProcessingBitmap);
-                currentProcessingBitmap = null;
-            }
+    private void processDetectionsParallel(List<DetectionResult> detections) {
+        if (detections == null || detections.isEmpty()) {
+            resetPipeline();
             return;
         }
 
-        Log.d("PIPELINE_TRACE", "4. Cropping box index: " + pendingDetections.size());
-        Log.d("SCAN_DEBUG", "Processing next box in queue...");
+        Log.d("PIPELINE_TRACE", "4. Processing " + detections.size() + " detections in parallel.");
+        AtomicInteger pendingCount = new AtomicInteger(detections.size());
+        processedResults.clear();
 
-        RectF normBox = detection.getBoundingBox();
+        for (DetectionResult detection : detections) {
+            RectF normBox = detection.getBoundingBox();
+            Bitmap cropped = null;
+            int width = 0;
+            int height = 0;
 
-        // 🚀 SCALE NORMALIZED -> PIXELS for cropping
-        float left = normBox.left * currentProcessingBitmap.getWidth();
-        float top = normBox.top * currentProcessingBitmap.getHeight();
-        float right = normBox.right * currentProcessingBitmap.getWidth();
-        float bottom = normBox.bottom * currentProcessingBitmap.getHeight();
-        RectF pixelBox = new RectF(left, top, right, bottom);
+            synchronized (pipelineLock) {
+                if (currentProcessingBitmap != null && !currentProcessingBitmap.isRecycled()) {
+                    width = currentProcessingBitmap.getWidth();
+                    height = currentProcessingBitmap.getHeight();
+                    
+                    // 🚀 SCALE NORMALIZED -> PIXELS for cropping
+                    float left = normBox.left * width;
+                    float top = normBox.top * height;
+                    float right = normBox.right * width;
+                    float bottom = normBox.bottom * height;
+                    RectF pixelBox = new RectF(left, top, right, bottom);
 
-        PerformanceProfiler.start("Crop");
-        PerformanceProfiler.log("Crop", String.format("Bitmap Size: %dx%d, Crop Size: %.0fx%.0f", 
-                currentProcessingBitmap.getWidth(), currentProcessingBitmap.getHeight(), pixelBox.width(), pixelBox.height()));
-        
-        Bitmap cropped = BitmapUtils.safeCrop(
-                currentProcessingBitmap,
-                RectUtils.toRect(
-                        pixelBox,
-                        currentProcessingBitmap.getWidth(),
-                        currentProcessingBitmap.getHeight()
-                )
-        );
-        PerformanceProfiler.end("Crop");
-
-        if (cropped != null) {
-            Log.d("PIPELINE_TRACE", "5. OCR Started");
-            Bitmap ocrInput = BitmapUtils.scaleToWidth(cropped, 640);
-            if (ocrInput != cropped) {
-                BitmapUtils.safeRecycle(cropped);
+                    PerformanceProfiler.start("Crop");
+                    cropped = BitmapUtils.safeCrop(
+                            currentProcessingBitmap,
+                            RectUtils.toRect(
+                                    pixelBox,
+                                    width,
+                                    height
+                            )
+                    );
+                    PerformanceProfiler.end("Crop");
+                }
             }
 
-            PerformanceProfiler.start("OCR");
-            PerformanceProfiler.log("OCR", "OCR Requested");
-            ocrProcessor.process(ocrInput, normalizedText -> {
-                PerformanceProfiler.end("OCR");
-                PerformanceProfiler.log("OCR", "Recognized Text Count: " + (normalizedText != null ? 1 : 0));
-                Log.d("PIPELINE_TRACE", "6. OCR Finished. Text: [" + normalizedText + "]");
-                BitmapUtils.safeRecycle(ocrInput);
-
-                if (normalizedText != null && !normalizedText.isEmpty()) {
-                    // STEP 7: AVOID DUPLICATES & PREVENT SPAM (using ScanDebouncer)
-                    if (scanDebouncer.shouldProcess(normalizedText) && !processedResults.contains(normalizedText)) {
-                        processedResults.add(normalizedText);
-
-                        Log.i("PIPELINE_TRACE", "7. Notifying callback with result");
-                        // STEP 9: UPDATE RESULT FLOW - Send one-by-one for immediate display
-                        if (scanResultCallback != null) {
-                            scanResultCallback.onScanCompleted(Collections.singletonList(normalizedText));
-                        }
-                    } else {
-                        Log.d("PIPELINE_TRACE", "7. Result debounced or already processed");
-                    }
-                } else {
-                    Log.d("PIPELINE_TRACE", "7. OCR returned empty/null");
+            if (cropped != null) {
+                Log.d("PIPELINE_TRACE", "5. OCR Task Submitted");
+                // Downscale for OCR performance
+                Bitmap ocrInput = BitmapUtils.scaleToWidth(cropped, 640);
+                if (ocrInput != cropped) {
+                    BitmapUtils.safeRecycle(cropped);
                 }
 
-                // STEP 6: After complete -> call processNext()
-                processNext();
-            });
-        } else {
-            Log.w("PIPELINE_TRACE", "5. Crop failed");
-            processNext();
+                ocrProcessor.process(ocrInput, normalizedText -> {
+                    Log.d("PIPELINE_TRACE", "6. OCR Finished. Text: [" + normalizedText + "]");
+                    BitmapUtils.safeRecycle(ocrInput);
+
+                    if (normalizedText != null && !normalizedText.isEmpty()) {
+                        if (scanDebouncer.shouldProcess(normalizedText) && !processedResults.contains(normalizedText)) {
+                            processedResults.add(normalizedText);
+                            Log.i("PIPELINE_TRACE", "7. Notifying callback with result");
+                            if (scanResultCallback != null) {
+                                scanResultCallback.onScanCompleted(Collections.singletonList(normalizedText));
+                            }
+                        }
+                    }
+
+                    // Check if all parallel tasks are done
+                    synchronized (pipelineLock) {
+                        if (pendingCount.decrementAndGet() == 0) {
+                            Log.d("PIPELINE_TRACE", "All parallel OCR tasks finished. Resetting queue.");
+                            isProcessingQueue.set(false);
+                            if (currentProcessingBitmap != null) {
+                                BitmapUtils.safeRecycle(currentProcessingBitmap);
+                                currentProcessingBitmap = null;
+                            }
+                        }
+                    }
+                });
+            } else {
+                synchronized (pipelineLock) {
+                    if (pendingCount.decrementAndGet() == 0) {
+                        isProcessingQueue.set(false);
+                        if (currentProcessingBitmap != null) {
+                            BitmapUtils.safeRecycle(currentProcessingBitmap);
+                            currentProcessingBitmap = null;
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    private void processNext() {
+        // Method preserved but unused in parallel mode.
+        // Cleaned up for production.
+        resetPipeline();
     }
 
     @OptIn(markerClass = ExperimentalLensFacing.class)

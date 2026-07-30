@@ -22,7 +22,7 @@ import java.util.Map;
  */
 public final class KioskStatusManager {
     private static final String TAG = "KioskStatusManager";
-    private static final long HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds
+    private static final long HEARTBEAT_INTERVAL_MS = 300_000; // 5 minutes (reduced frequency to save costs)
 
     private static volatile KioskStatusManager INSTANCE;
     private final Context appContext;

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import TableLayout from '../Shared/TableLayout';
 import { trStyle, tdStyle, tdBoldStyle, badgeStyle, COLORS, SHADOWS } from '../Shared/Styles';
 
-const DatabaseManager = ({ files, loading }) => {
+const DatabaseManager = ({ files, loading, onRefresh }) => {
     const [activeTab, setActiveTab] = useState('images');
     const [searchTerm, setSearchTerm] = useState('');
     const [playingUrl, setPlayingUrl] = useState(null);
@@ -67,6 +67,25 @@ const DatabaseManager = ({ files, loading }) => {
                     <p style={{ margin: '5px 0 0 0', color: COLORS.textMuted, fontSize: '14px' }}>Browse and copy URLs for assets stored in Firebase.</p>
                 </div>
                 <div style={{ display: 'flex', gap: '12px' }}>
+                    <button
+                        onClick={onRefresh}
+                        disabled={loading}
+                        style={{
+                            padding: '10px 20px',
+                            borderRadius: '10px',
+                            border: `1px solid ${COLORS.border}`,
+                            backgroundColor: 'white',
+                            color: COLORS.textMain,
+                            cursor: 'pointer',
+                            fontWeight: '600',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px'
+                        }}
+                    >
+                        <span style={{ transform: loading ? 'rotate(360deg)' : 'none', transition: 'transform 1s infinite linear', display: 'inline-block' }}>🔄</span>
+                        {loading ? 'Refreshing...' : 'Refresh Storage'}
+                    </button>
                     <div style={{ position: 'relative' }}>
                         <input
                             type="text"

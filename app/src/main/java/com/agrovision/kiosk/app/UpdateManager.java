@@ -1,5 +1,6 @@
 package com.agrovision.kiosk.app;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
@@ -40,6 +41,10 @@ public final class UpdateManager {
     }
 
     private void showDownloadProgressDialog() {
+        if (context instanceof Activity && ((Activity) context).isFinishing()) {
+            return;
+        }
+
         // We'll create a simple custom layout programmatically for reliability
         android.widget.LinearLayout layout = new android.widget.LinearLayout(context);
         layout.setOrientation(android.widget.LinearLayout.VERTICAL);
@@ -74,28 +79,35 @@ public final class UpdateManager {
             DownloadManager.Query query = new DownloadManager.Query().setFilterById(downloadId);
             android.database.Cursor cursor = manager.query(query);
 
-            if (cursor.moveToFirst()) {
-                int status = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS));
-                if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_SUCCESSFUL) {
-                    long downloaded = cursor.getLong(cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
-                    long total = cursor.getLong(cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+            if (cursor != null && cursor.moveToFirst()) {
+                int statusColumn = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
+                if (statusColumn != -1) {
+                    int status = cursor.getInt(statusColumn);
+                    if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_SUCCESSFUL) {
+                        int downloadedColumn = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR);
+                        int totalColumn = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES);
 
-                    if (total > 0) {
-                        int progress = (int) ((downloaded * 100L) / total);
-                        handler.post(() -> {
-                            progressBar.setIndeterminate(false);
-                            progressBar.setProgress(progress);
-                            tvProgress.setText("डाउनलोड होत आहे: " + progress + "% (" + (downloaded/1024/1024) + "MB / " + (total/1024/1024) + "MB)");
-                        });
-                    } else {
-                        handler.post(() -> {
-                            progressBar.setIndeterminate(true);
-                            tvProgress.setText("डाउनलोड होत आहे... (Downloading...)");
-                        });
+                        if (downloadedColumn != -1 && totalColumn != -1) {
+                            long downloaded = cursor.getLong(downloadedColumn);
+                            long total = cursor.getLong(totalColumn);
+
+                            if (total > 0) {
+                                int progress = (int) ((downloaded * 100L) / total);
+                                handler.post(() -> {
+                                    if (progressBar != null) {
+                                        progressBar.setIndeterminate(false);
+                                        progressBar.setProgress(progress);
+                                    }
+                                    if (tvProgress != null) {
+                                        tvProgress.setText("डाउनलोड होत आहे: " + progress + "% (" + (downloaded / 1024 / 1024) + "MB / " + (total / 1024 / 1024) + "MB)");
+                                    }
+                                });
+                            }
+                        }
                     }
                 }
+                cursor.close();
             }
-            cursor.close();
             handler.postDelayed(this, 1000); // Update every second
         }
     };
@@ -143,6 +155,45 @@ public final class UpdateManager {
             showUpdateDialog(latestVersionName, apkUrl, forceUpdate != null && forceUpdate);
         } else {
             LogUtils.d("App is up to date (Current version: " + currentVersionCode + ").");
+            cleanupOldApks();
+        }
+    }
+
+    private void cleanupOldApks() {
+        try {
+            // 1. Clear DownloadManager database entries for this app
+            DownloadManager manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+            if (manager != null) {
+                DownloadManager.Query query = new DownloadManager.Query();
+                android.database.Cursor cursor = manager.query(query);
+                if (cursor != null) {
+                    int idColumn = cursor.getColumnIndex(DownloadManager.COLUMN_ID);
+                    if (idColumn != -1) {
+                        while (cursor.moveToNext()) {
+                            long id = cursor.getLong(idColumn);
+                            manager.remove(id);
+                        }
+                    }
+                    cursor.close();
+                }
+            }
+
+            // 2. Manual cleanup of the download directory
+            File downloadDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (downloadDir != null && downloadDir.exists()) {
+                File[] files = downloadDir.listFiles();
+                if (files != null) {
+                    for (File file : files) {
+                        if (file.getName().endsWith(".apk")) {
+                            if (file.delete()) {
+                                LogUtils.i("Cleanup: Deleted old update file: " + file.getName());
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LogUtils.e("Failed to cleanup old updates", e);
         }
     }
 
@@ -178,7 +229,6 @@ public final class UpdateManager {
     }
 
     private void startDownload(String url) {
-        // Improved security check: Allow firebasestorage and our own cloud domains if added
         if (url == null || (!url.contains("firebasestorage.googleapis.com") && !url.contains("agrovision"))) {
             LogUtils.e("Security Alert: Blocked APK download from untrusted source: " + url);
             Toast.makeText(context, "सुरक्षित नसलेला अपडेट स्रोत ब्लॉक केला (Untrusted update source blocked)", Toast.LENGTH_LONG).show();
@@ -192,6 +242,8 @@ public final class UpdateManager {
         showDownloadProgressDialog();
 
         try {
+            cleanupOldApks();
+
             DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
             request.setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI | DownloadManager.Request.NETWORK_MOBILE);
             request.setTitle("AgroVision Update");
@@ -199,12 +251,6 @@ public final class UpdateManager {
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             
             String fileName = "AgroVision_Update.apk";
-            // Clean up any old file before starting new download
-            File oldFile = new File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName);
-            if (oldFile.exists()) {
-                oldFile.delete();
-            }
-
             request.setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, fileName);
 
             DownloadManager manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
@@ -212,7 +258,6 @@ public final class UpdateManager {
                 downloadId = manager.enqueue(request);
                 handler.post(progressRunnable);
                 
-                // Use ApplicationContext for registration to prevent Activity leaks
                 Context appContext = context.getApplicationContext();
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     appContext.registerReceiver(onDownloadComplete, 
@@ -228,7 +273,6 @@ public final class UpdateManager {
         } catch (Exception e) {
             LogUtils.e("Failed to start download", e);
             isUpdateInProgress = false;
-            Toast.makeText(context, "डाउनलोड सुरू करण्यात अडथळा आला (Failed to start download)", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -249,28 +293,31 @@ public final class UpdateManager {
         query.setFilterById(id);
         android.database.Cursor cursor = manager.query(query);
 
-        if (cursor.moveToFirst()) {
-            int columnIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
-            int status = cursor.getInt(columnIndex);
-            int reasonIndex = cursor.getColumnIndex(DownloadManager.COLUMN_REASON);
-            int reason = cursor.getInt(reasonIndex);
+        if (cursor != null && cursor.moveToFirst()) {
+            int statusColumn = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
+            int reasonColumn = cursor.getColumnIndex(DownloadManager.COLUMN_REASON);
+            
+            if (statusColumn != -1) {
+                int status = cursor.getInt(statusColumn);
+                int reason = reasonColumn != -1 ? cursor.getInt(reasonColumn) : -1;
 
-            if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                LogUtils.i("Download successful. Launching installer.");
-                if (progressDialog != null && progressDialog.isShowing()) {
-                    progressDialog.dismiss();
+                if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                    LogUtils.i("Download successful (ID: " + id + "). Launching installer.");
+                    if (progressDialog != null && progressDialog.isShowing()) {
+                        progressDialog.dismiss();
+                    }
+                    installApk(context, id);
+                } else if (status == DownloadManager.STATUS_FAILED) {
+                    LogUtils.e("Download failed (ID: " + id + "). Status: " + status + ", Reason: " + reason);
+                    if (progressDialog != null && progressDialog.isShowing()) {
+                        progressDialog.dismiss();
+                    }
+                    isUpdateInProgress = false;
+                    Toast.makeText(context, "अपडेट डाउनलोड अयशस्वी (Download failed)", Toast.LENGTH_SHORT).show();
                 }
-                installApk();
-            } else if (status == DownloadManager.STATUS_FAILED) {
-                LogUtils.e("Download failed. Status: " + status + ", Reason: " + reason);
-                if (progressDialog != null && progressDialog.isShowing()) {
-                    progressDialog.dismiss();
-                }
-                isUpdateInProgress = false;
-                Toast.makeText(context, "अपडेट डाउनलोड अयशस्वी (Download failed)", Toast.LENGTH_SHORT).show();
             }
+            cursor.close();
         }
-        cursor.close();
         
         try {
             context.getApplicationContext().unregisterReceiver(onDownloadComplete);
@@ -279,39 +326,112 @@ public final class UpdateManager {
         }
     }
 
-    private void installApk() {
-        File file = new File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "AgroVision_Update.apk");
-        if (!file.exists()) {
-            LogUtils.e("APK file not found at " + file.getAbsolutePath());
-            isUpdateInProgress = false;
-            return;
-        }
-
-        LogUtils.i("Installing APK from: " + file.getAbsolutePath());
-
+    private void verifyApkBeforeInstall(Context context, long downloadId) {
         try {
-            // Check for install permission on Android 8+
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (!context.getPackageManager().canRequestPackageInstalls()) {
-                    LogUtils.w("Permission missing: REQUEST_INSTALL_PACKAGES. Opening settings.");
-                    Toast.makeText(context, "कृपया 'Unknown Apps' इंस्टॉल करण्याची परवानगी द्या", Toast.LENGTH_LONG).show();
-                    Intent settingsIntent = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
-                    settingsIntent.setData(Uri.parse("package:" + context.getPackageName()));
-                    settingsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    context.startActivity(settingsIntent);
-                    isUpdateInProgress = false;
-                    return;
+            DownloadManager manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+            try (android.os.ParcelFileDescriptor pfd = manager.openDownloadedFile(downloadId)) {
+                if (pfd == null) {
+                    LogUtils.w("Verification: Could not open downloaded file descriptor.");
+                }
+            } catch (Exception e) {
+                LogUtils.w("Verification: Error opening file descriptor: " + e.getMessage());
+            }
+
+            // Since we can't easily get a File path from DownloadManager on all versions,
+            // we'll try to find the file we saved
+            File file = new File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "AgroVision_Update.apk");
+            if (!file.exists()) {
+                LogUtils.w("Verification: APK file not found on disk for metadata check.");
+                return;
+            }
+
+            PackageManager pm = context.getPackageManager();
+            PackageInfo info = pm.getPackageArchiveInfo(file.getAbsolutePath(), 0);
+
+            if (info != null) {
+                long currentVersion = getAppVersionCode();
+                long newVersion = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ? info.getLongVersionCode() : info.versionCode;
+                
+                LogUtils.i("--- APK PRE-INSTALL VERIFICATION ---");
+                LogUtils.i("Package Name: " + info.packageName);
+                LogUtils.i("New Version Code: " + newVersion + " (Current: " + currentVersion + ")");
+                LogUtils.i("New Version Name: " + info.versionName);
+                
+                // Check free space
+                File externalDir = context.getExternalFilesDir(null);
+                if (externalDir != null) {
+                    long freeSpace = externalDir.getFreeSpace();
+                    LogUtils.i("Storage: " + (freeSpace / 1024 / 1024) + "MB free");
+                    if (freeSpace < (file.length() * 3)) { // Rule of thumb: need ~3x APK size to install
+                        LogUtils.w("WARNING: Low storage space. Installation might fail.");
+                    }
+                }
+
+                if (!context.getPackageName().equals(info.packageName)) {
+                    LogUtils.e("CRITICAL: APK package name mismatch! App: " + context.getPackageName() + " vs APK: " + info.packageName);
+                }
+                if (newVersion <= currentVersion) {
+                    LogUtils.w("WARNING: New version code is NOT greater than current version. Install might fail.");
+                }
+                LogUtils.i("------------------------------------");
+            } else {
+                LogUtils.e("CRITICAL: Failed to parse APK metadata. The file might be corrupted or incomplete.");
+            }
+        } catch (Exception e) {
+            LogUtils.w("Could not verify APK metadata: " + e.getMessage());
+        }
+    }
+
+    private void installApk(Context context, long downloadId) {
+        try {
+            // 1. Try to get FileProvider URI first (usually more reliable for Kiosks)
+            File file = new File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "AgroVision_Update.apk");
+            Uri contentUri;
+            
+            if (file.exists()) {
+                contentUri = FileProvider.getUriForFile(context, "com.agrovision.kiosk.fileprovider", file);
+                LogUtils.i("Installing using FileProvider URI: " + contentUri);
+            } else {
+                DownloadManager manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+                contentUri = manager.getUriForDownloadedFile(downloadId);
+                LogUtils.w("APK file not found on disk, falling back to DownloadManager URI: " + contentUri);
+            }
+
+            if (contentUri == null) {
+                LogUtils.e("Failed to resolve APK URI.");
+                isUpdateInProgress = false;
+                return;
+            }
+
+            // 🚀 NEW: Pre-install verification logs
+            verifyApkBeforeInstall(context, downloadId);
+
+            // 2. If we are in an Activity, try to stop LockTask mode temporarily
+            // This is CRITICAL for kiosks, otherwise the installer is blocked.
+            if (context instanceof Activity) {
+                Activity activity = (Activity) context;
+                try {
+                    activity.stopLockTask();
+                    LogUtils.i("Temporary release of LockTask for installation");
+                } catch (Exception e) {
+                    // Might fail if not in lock task mode, that's okay
                 }
             }
 
-            Uri contentUri = FileProvider.getUriForFile(context, "com.agrovision.kiosk.fileprovider", file);
+            // 3. Prepare Install Intent
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setDataAndType(contentUri, "application/vnd.android.package-archive");
-            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            intent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
+            
             context.startActivity(intent);
+            LogUtils.i("Installer activity started successfully.");
+            
         } catch (Exception e) {
             LogUtils.e("Failed to launch installer", e);
-            Toast.makeText(context, "इन्स्टॉलर सुरू करण्यात अडथळा आला (Failed to start installer)", Toast.LENGTH_SHORT).show();
+            Toast.makeText(context, "इन्स्टॉलर सुरू करण्यात अडथळा आला (Installer failed)", Toast.LENGTH_SHORT).show();
         } finally {
             isUpdateInProgress = false;
         }

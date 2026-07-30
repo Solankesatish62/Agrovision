@@ -1,46 +1,180 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:padding="24dp">
+    app:cardCornerRadius="28dp"
+    app:cardElevation="0dp"
+    app:strokeWidth="1dp"
+    app:strokeColor="#E2E8F0">
 
-    <androidx.appcompat.widget.SwitchCompat
-        android:id="@+id/switchVoice"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="आवाज चालू करा (Enable Voice)"
-        android:textSize="18sp"
-        android:padding="8dp"/>
+        android:orientation="vertical"
+        android:padding="32dp">
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="आवाज पातळी (Volume)"
-        android:layout_marginTop="16dp"
-        android:textSize="16sp"
-        android:padding="8dp"/>
+        <!-- Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="24dp">
 
-    <SeekBar
-        android:id="@+id/seekBarVolume"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:max="100"
-        android:progress="100" />
+            <ImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@android:drawable/ic_menu_manage"
+                app:tint="@color/green" />
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="निकाल स्क्रीन वेळ (Result Screen Time)"
-        android:layout_marginTop="16dp"
-        android:textSize="16sp"
-        android:padding="8dp"/>
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="16dp"
+                android:orientation="vertical">
 
-    <Spinner
-        android:id="@+id/spinnerResultTime"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:minHeight="48dp"
-        android:padding="8dp" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="सेटिंग्ज (Settings)"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    android:textColor="#1A202C" />
 
-</LinearLayout>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="कौशल्य आणि प्रदर्शन व्यवस्थापित करा"
+                    android:textSize="14sp"
+                    android:textColor="#718096" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#EDF2F7"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Audio Settings Group -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ऑडिओ सेटिंग्ज (Audio Settings)"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="@color/green"
+            android:textAllCaps="true"
+            android:letterSpacing="0.1"
+            android:layout_marginBottom="16dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="आवाज चालू करा (Enable Voice)"
+                android:textSize="18sp"
+                android:textColor="#2D3748" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switchVoice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:thumbIcon="@null" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="आवाज पातळी (Volume)"
+                android:textSize="16sp"
+                android:textColor="#4A5568"
+                android:layout_marginBottom="8dp" />
+
+            <com.google.android.material.slider.Slider
+                android:id="@+id/sliderVolume"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:valueFrom="0"
+                android:valueTo="100"
+                android:value="100"
+                app:thumbColor="@color/green"
+                app:trackColorActive="@color/green"
+                app:trackColorInactive="#E2E8F0" />
+        </LinearLayout>
+
+        <!-- Display Settings Group -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="डिस्प्ले सेटिंग्ज (Display Settings)"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="@color/green"
+            android:textAllCaps="true"
+            android:letterSpacing="0.1"
+            android:layout_marginBottom="16dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="32dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="निकाल स्क्रीन वेळ (Result Screen Time)"
+                android:textSize="16sp"
+                android:textColor="#4A5568"
+                android:layout_marginBottom="12dp" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp">
+
+                <AutoCompleteTextView
+                    android:id="@+id/spinnerResultTime"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none"
+                    android:padding="16dp" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+        </LinearLayout>
+
+        <!-- Actions -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnShowAds"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:text="जाहिरात दाखवा (Show Advertisement)"
+            android:textSize="16sp"
+            android:textColor="@color/green"
+            app:icon="@android:drawable/ic_media_play"
+            app:iconTint="@color/green"
+            app:cornerRadius="16dp" />
+
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

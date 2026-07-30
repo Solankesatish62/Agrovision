@@ -11,6 +11,7 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * AdManager
@@ -23,13 +24,41 @@ public final class AdManager {
     private static AdManager instance;
 
     private final Context context;
-    private final List<String> adUrls = new ArrayList<>();
-    private long rotationIntervalMs = 10000;
+    private final List<AdModel> ads = new ArrayList<>();
+    private String shopBannerUrl = null;
+    private String shopDisplayName = null;
+    private String shopBrandingType = "text"; // "text" or "poster"
+    private long rotationIntervalMs = 60000; // Default 1 minute for photos
     private String adVersion = String.valueOf(System.currentTimeMillis());
     private final List<OnAdUpdateListener> listeners = new ArrayList<>();
 
+    public static class AdModel {
+        public String url;
+        public String type; // "image" or "video"
+
+        public AdModel(String url, String type) {
+            this.url = url;
+            this.type = type;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            AdModel adModel = (AdModel) o;
+            return Objects.equals(url, adModel.url) && Objects.equals(type, adModel.type);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(url, type);
+        }
+    }
+
     public interface OnAdUpdateListener {
-        void onAdsUpdated(List<String> urls, long intervalMs, String version);
+        void onAdsUpdated(List<AdModel> ads, long intervalMs, String version);
+        void onShopBannerUpdated(String bannerUrl);
+        void onBrandingUpdated(String type, String name, String url);
     }
 
     private AdManager(Context context) {
@@ -66,91 +95,123 @@ public final class AdManager {
 
     @SuppressWarnings("unchecked")
     private void updateAdList(DocumentSnapshot doc) {
-        List<String> newUrls = new ArrayList<>();
-        long newIntervalMs = 10000;
+        List<AdModel> newAds = new ArrayList<>();
+        long newIntervalMs = 60000; // Default 1 minute
+        String newBannerUrl = null;
+        String newDisplayName = null;
+        String newBrandingType = "text";
 
         if (doc.exists()) {
+            newBannerUrl = doc.getString("shopBannerUrl");
+            newDisplayName = doc.getString("shopDisplayName");
+            newBrandingType = doc.getString("shopBrandingType");
+            if (newBrandingType == null) newBrandingType = "text";
+
             // 1. Check modern 'ads' field (List of Maps or Map of Maps)
             Object adsObj = doc.get("ads");
             if (adsObj instanceof List) {
                 List<Map<String, Object>> adsList = (List<Map<String, Object>>) adsObj;
                 for (Map<String, Object> adMap : adsList) {
                     if (isAdActive(adMap)) {
-                        String url = (String) adMap.get("imageUrl");
-                        if (url != null && !url.isEmpty() && !newUrls.contains(url)) {
-                            newUrls.add(url);
-                        }
+                        addAdFromMap(adMap, newAds);
                     }
                 }
             } else if (adsObj instanceof Map) {
                 Map<String, Object> adsMap = (Map<String, Object>) adsObj;
-                // Support both indexed map "0", "1"... and arbitrary keys
                 for (Object value : adsMap.values()) {
                     if (value instanceof Map) {
                         Map<String, Object> adMap = (Map<String, Object>) value;
                         if (isAdActive(adMap)) {
-                            String url = (String) adMap.get("imageUrl");
-                            if (url != null && !url.isEmpty() && !newUrls.contains(url)) {
-                                newUrls.add(url);
-                            }
+                            addAdFromMap(adMap, newAds);
                         }
                     }
                 }
             }
 
-            // 2. Check legacy 'ad_list' (List of strings)
-            // ONLY if modern ads are empty to avoid "zombie" ads that were deleted from one but exist in other
-            if (newUrls.isEmpty()) {
+            // 2. Check legacy 'ad_list' (List of strings) - assume images
+            if (newAds.isEmpty()) {
                 Object adListObj = doc.get("ad_list");
                 if (adListObj instanceof List) {
                     for (Object item : (List<?>) adListObj) {
-                        if (item instanceof String && !((String) item).isEmpty() && !newUrls.contains(item)) {
-                            newUrls.add((String) item);
+                        if (item instanceof String && !((String) item).isEmpty()) {
+                            newAds.add(new AdModel((String) item, "image"));
                         }
                     }
                 }
             }
             
             // 3. Check 'imageUrl' (Single string)
-            if (newUrls.isEmpty()) {
+            if (newAds.isEmpty()) {
                 String singleUrl = doc.getString("imageUrl");
                 if (singleUrl != null && !singleUrl.isEmpty()) {
-                    newUrls.add(singleUrl);
+                    newAds.add(new AdModel(singleUrl, "image"));
                 }
             }
 
             Long interval = doc.getLong("interval_seconds");
-            newIntervalMs = interval != null ? interval * 1000 : 10000;
+            newIntervalMs = interval != null ? interval * 1000 : 60000;
         } else {
             Log.w(TAG, "Ad document deleted or missing. Clearing local ad queue.");
         }
 
         // 🚀 Detect changes
-        boolean changed = !newUrls.equals(adUrls) || (newIntervalMs != rotationIntervalMs);
+        boolean changed = !newAds.equals(ads) || (newIntervalMs != rotationIntervalMs);
+        boolean bannerChanged = !Objects.equals(newBannerUrl, shopBannerUrl);
 
         if (changed) {
             // 🚀 Invalidate Glide cache by changing the signature
             this.adVersion = String.valueOf(System.currentTimeMillis());
             
-            Log.i(TAG, "Ad Catalog Sync: " + adUrls.size() + " -> " + newUrls.size() + " ads. Version: " + adVersion);
+            Log.i(TAG, "Ad Catalog Sync: " + ads.size() + " -> " + newAds.size() + " ads. Version: " + adVersion);
             
-            this.adUrls.clear();
-            this.adUrls.addAll(newUrls);
+            this.ads.clear();
+            this.ads.addAll(newAds);
             this.rotationIntervalMs = newIntervalMs;
 
-            // 🚀 Preload all with the NEW signature
-            for (String url : adUrls) {
-                Glide.with(context)
-                        .load(url)
-                        .diskCacheStrategy(DiskCacheStrategy.ALL)
-                        .signature(new com.bumptech.glide.signature.ObjectKey(adVersion))
-                        .preload();
+            // 🚀 Preload all images with the NEW signature
+            for (AdModel ad : ads) {
+                if ("image".equals(ad.type)) {
+                    Glide.with(context)
+                            .load(ad.url)
+                            .diskCacheStrategy(DiskCacheStrategy.ALL)
+                            .signature(new com.bumptech.glide.signature.ObjectKey(adVersion))
+                            .preload();
+                }
             }
 
             // 🚀 Notify listeners (AdActivity)
             for (OnAdUpdateListener listener : listeners) {
-                listener.onAdsUpdated(new ArrayList<>(adUrls), rotationIntervalMs, adVersion);
+                listener.onAdsUpdated(new ArrayList<>(ads), rotationIntervalMs, adVersion);
             }
+        }
+
+        if (bannerChanged) {
+            this.shopBannerUrl = newBannerUrl;
+            for (OnAdUpdateListener listener : listeners) {
+                listener.onShopBannerUpdated(shopBannerUrl);
+            }
+        }
+
+        boolean brandingChanged = !Objects.equals(newDisplayName, shopDisplayName) || !Objects.equals(newBrandingType, shopBrandingType);
+        if (brandingChanged || bannerChanged) {
+            this.shopDisplayName = newDisplayName;
+            this.shopBrandingType = newBrandingType;
+            for (OnAdUpdateListener listener : listeners) {
+                listener.onBrandingUpdated(shopBrandingType, shopDisplayName, shopBannerUrl);
+            }
+        }
+    }
+
+    private void addAdFromMap(Map<String, Object> adMap, List<AdModel> adList) {
+        String videoUrl = (String) adMap.get("videoUrl");
+        if (videoUrl != null && !videoUrl.isEmpty()) {
+            adList.add(new AdModel(videoUrl, "video"));
+            return;
+        }
+        
+        String imageUrl = (String) adMap.get("imageUrl");
+        if (imageUrl != null && !imageUrl.isEmpty()) {
+            adList.add(new AdModel(imageUrl, "image"));
         }
     }
 
@@ -170,12 +231,24 @@ public final class AdManager {
         listeners.remove(listener);
     }
 
-    public List<String> getAdUrls() {
-        return new ArrayList<>(adUrls);
+    public List<AdModel> getAds() {
+        return new ArrayList<>(ads);
     }
 
     public long getRotationIntervalMs() {
         return rotationIntervalMs;
+    }
+
+    public String getShopBannerUrl() {
+        return shopBannerUrl;
+    }
+
+    public String getShopDisplayName() {
+        return shopDisplayName;
+    }
+
+    public String getShopBrandingType() {
+        return shopBrandingType;
     }
 
     public String getAdVersion() {

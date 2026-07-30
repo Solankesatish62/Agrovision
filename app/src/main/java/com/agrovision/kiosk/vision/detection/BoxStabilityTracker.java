@@ -20,8 +20,11 @@ public final class BoxStabilityTracker {
     /* ---------------- CONFIG (OPTIMIZED) ---------------- */
 
     // 🚀 Optimization 1: Set to near-instant for faster kiosk response
-    private static final long REQUIRED_STABLE_DURATION_MS = 100;
-    private static final float MIN_IOU_THRESHOLD = 0.5f;
+    private static final long DEFAULT_STABLE_DURATION_MS = 100;
+    private static final long INSTANT_STABLE_DURATION_MS = 0; // Trigger immediately if very high confidence
+    private static final float INSTANT_CONFIDENCE_THRESHOLD = 0.92f;
+    
+    private static final float MIN_IOU_THRESHOLD = 0.35f; // 🚀 Reduced from 0.5 to allow handheld jitter
     private static final float MIN_CONFIDENCE = 0.3f;
 
     /* ---------------- INTERNAL STATE ---------------- */
@@ -97,7 +100,10 @@ public final class BoxStabilityTracker {
         }
 
         // Stable overlap → check time
-        if (!stable && (timestampMs - stableStartTimeMs) >= REQUIRED_STABLE_DURATION_MS) {
+        long requiredDuration = (detection.getConfidence() >= INSTANT_CONFIDENCE_THRESHOLD) 
+                ? INSTANT_STABLE_DURATION_MS : DEFAULT_STABLE_DURATION_MS;
+
+        if (!stable && (timestampMs - stableStartTimeMs) >= requiredDuration) {
             stable = true;
             return true;
         }

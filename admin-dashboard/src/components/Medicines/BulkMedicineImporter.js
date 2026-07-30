@@ -107,18 +107,38 @@ const BulkMedicineImporter = ({ existingMedicines, onSaveAll, onCancel }) => {
       const extractValue = (targetLabel) => {
         const escapedLabel = targetLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const labelPattern = labels.concat(['Product Name']).map(l => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-        const regex = new RegExp(`${escapedLabel}\\s*[:：]\\s*((?:.(?!${labelPattern}|[🎯🌱🧪⚡⚠️•]))*)`, 'i');
+        // Enhanced regex to skip bullet points (*, •, -) and handle multi-line content
+        const regex = new RegExp(`(?:^|\\n)\\s*[*•-]?\\s*${escapedLabel}\\s*[:：]\\s*([\\s\\S]*?)(?=\\n\\s*[*•-]?\\s*(?:${labelPattern})\\s*[:：]|[🎯🌱🧪⚡⚠️•]|$)`, 'i');
         const match = fullBlock.match(regex);
-        return match ? match[1].trim() : '';
+        if (!match) return '';
+
+        let val = match[1].trim();
+        val = val.replace(/\[\d+(?:,\s*\d+)*\]/g, ''); // Remove citations
+        val = val.replace(/\s+/g, ' ').replace(/\s*[-—|]\s*$/, '').trim();
+        return val;
       };
 
       const name = extractValue('Product Name');
       const company = extractValue('Manufacturer');
       const chemical = extractValue('Chemical Name');
-      const crop = extractValue('हे औषध काय काम करतं');
+      const cib = extractValue('CIB&RC Registration Number');
+      const work = extractValue('हे औषध काय काम करतं');
       const disease = extractValue('कोणती समस्या सोडवतं');
-      const marathi = extractValue('कोणत्या पिकावर');
-      const usage = extractValue('मात्रा');
+
+      // Combined Marathi Info: "कोणत्या पिकावर" + "कोणत्या टप्प्यात"
+      const targetCrops = extractValue('कोणत्या पिकावर');
+      const stageInfo = extractValue('कोणत्या टप्प्यात');
+      let marathiParts = [];
+      if (targetCrops) marathiParts.push(`कोणत्या पिकावर: ${targetCrops}`);
+      if (stageInfo) marathiParts.push(`कोणत्या टप्प्यात: ${stageInfo}`);
+
+      const dose = extractValue('मात्रा');
+      const acre = extractValue('प्रति एकर');
+      const method = extractValue('कसं वापरायचं');
+      let usageParts = [];
+      if (dose) usageParts.push(`मात्रा: ${dose}`);
+      if (acre) usageParts.push(`प्रति एकर: ${acre}`);
+      if (method) usageParts.push(`कसं वापरायचं: ${method}`);
 
       if (!name) return null;
 
@@ -128,10 +148,12 @@ const BulkMedicineImporter = ({ existingMedicines, onSaveAll, onCancel }) => {
       return {
         medicineName: name,
         company: company || 'Unknown',
-        crop: crop,
+        cibNo: cib || '',
+        chemicalName: chemical || '',
+        crop: work,
         disease: disease,
-        marathiInfo: marathi,
-        usage: usage,
+        marathiInfo: marathiParts.join('\n\n'),
+        usage: usageParts.join('\n'),
         ocrKeywords: keywords,
         barcodePrefixes: [],
         imageUrls: [],

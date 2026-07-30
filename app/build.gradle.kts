@@ -11,8 +11,8 @@ android {
         applicationId = "com.agrovision.kiosk"
         minSdk = 24
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.6"
+        versionCode =11
+        versionName = "1.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

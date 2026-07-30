@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
+import android.widget.VideoView;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -16,7 +17,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.agrovision.kiosk.R;
 import com.agrovision.kiosk.camera.CameraController;
 import com.agrovision.kiosk.state.AppState;
-import com.agrovision.kiosk.state.StateEvent;
 import com.agrovision.kiosk.state.StateMachine;
 import com.agrovision.kiosk.state.StateObserver;
 import com.agrovision.kiosk.util.LogUtils;
@@ -46,27 +46,27 @@ import java.util.Map;
 /**
  * AdActivity
  *
- * Responsibility: Full-screen display of advertisements during idle time.
- * Optimized for instant display using global AdManager preloading and real-time sync.
+ * Responsibility: Full-screen display of advertisements.
+ * Now supports both images (1 min) and videos (duration) in a slideshow.
  */
 public final class AdActivity extends AppCompatActivity implements StateObserver, AdManager.OnAdUpdateListener {
 
     private static final String TAG = "AdActivity";
     public static final String EXTRA_AD_TYPE = "ad_type";
-    public static final String EXTRA_AD_DURATION = "ad_duration";
     
-    public enum AdType { SCAN, IDLE }
+    public enum AdType { SCAN, IDLE, SLIDESHOW }
 
     private ImageView ivAd;
+    private VideoView vvAd;
+    private View btnPrevAd;
+    private View btnNextAd;
     private final Handler rotationHandler = new Handler(Looper.getMainLooper());
-    private final Handler completionHandler = new Handler(Looper.getMainLooper());
-    private final List<String> adUrls = new ArrayList<>();
+    private final List<AdManager.AdModel> ads = new ArrayList<>();
     private int currentAdIndex = 0;
-    private long rotationIntervalMs = 10000;
+    private long rotationIntervalMs = 60000; // 1 minute default for photos
     private boolean isVisible = false;
-    private AdType currentType = AdType.IDLE;
+    private AdType currentType = AdType.SLIDESHOW;
     private String adVersion = "";
-    private boolean timerStarted = false;
 
     // 🚀 Ad Impression Tracking
     private final Map<String, Long> localAdCounts = new HashMap<>();
@@ -81,12 +81,16 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
         hideSystemUI();
 
         ivAd = findViewById(R.id.ivAd);
+        vvAd = findViewById(R.id.vvAd);
+        btnPrevAd = findViewById(R.id.btnPrevAd);
+        btnNextAd = findViewById(R.id.btnNextAd);
+        
         // 🚀 Neutral branded loading state
         ivAd.setImageResource(R.drawable.logo_agrovision);
         ivAd.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
 
         currentType = (AdType) getIntent().getSerializableExtra(EXTRA_AD_TYPE);
-        if (currentType == null) currentType = AdType.IDLE;
+        if (currentType == null) currentType = AdType.SLIDESHOW;
 
         LogUtils.i("AdActivity started. Type: " + currentType);
 
@@ -94,61 +98,77 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
         AdManager.getInstance(this).addListener(this);
         CameraController.getInstance(this).setDetectionEnabled(false);
         
+        findViewById(R.id.tvAdBadge).setOnClickListener(v -> finish()); // Allow closing slideshow
+
+        btnNextAd.setOnClickListener(v -> moveToNextAd());
+        btnPrevAd.setOnClickListener(v -> moveToPrevAd());
+
         // 🚀 Load catalog from shared AdManager
         loadFromAdManager();
     }
 
     @Override
-    public void onAdsUpdated(List<String> urls, long intervalMs, String version) {
+    public void onAdsUpdated(List<AdManager.AdModel> updatedAds, long intervalMs, String version) {
         Log.i(TAG, "Ad catalog updated in real-time. Refreshing queue.");
         runOnUiThread(() -> {
-            this.adUrls.clear();
-            this.adUrls.addAll(urls);
+            this.ads.clear();
+            this.ads.addAll(updatedAds);
             this.rotationIntervalMs = intervalMs;
             this.adVersion = version;
 
-            if (adUrls.isEmpty()) {
+            if (ads.isEmpty()) {
                 Log.w(TAG, "All ads removed or deactivated. Finishing.");
-                completeAd();
+                finish();
                 return;
             }
 
-            // If current ad index is now invalid, reset
-            if (currentAdIndex >= adUrls.size()) {
+            if (currentAdIndex >= ads.size()) {
                 currentAdIndex = 0;
             }
 
-            // Force immediate refresh of current display
+            // Update arrow visibility
+            int navVisibility = ads.size() > 1 ? View.VISIBLE : View.GONE;
+            btnNextAd.setVisibility(navVisibility);
+            btnPrevAd.setVisibility(navVisibility);
+
             showNextAd();
         });
     }
 
+    @Override
+    public void onShopBannerUpdated(String bannerUrl) {
+        // No-op: Full-screen ad slideshow doesn't show the shop banner.
+        // The banner is handled by HomeActivity.
+    }
+
+    @Override
+    public void onBrandingUpdated(String type, String name, String url) {
+        // No-op: Full-screen ad slideshow doesn't show the branding header.
+    }
+
     private void loadFromAdManager() {
         AdManager adManager = AdManager.getInstance(this);
-        List<String> urls = adManager.getAdUrls();
+        List<AdManager.AdModel> availableAds = adManager.getAds();
         
-        if (urls.isEmpty()) {
+        if (availableAds.isEmpty()) {
             Log.w(TAG, "No ads available in AdManager. Finishing.");
             finish();
             return;
         }
 
-        this.adUrls.clear();
-        this.adUrls.addAll(urls);
+        this.ads.clear();
+        this.ads.addAll(availableAds);
         this.rotationIntervalMs = adManager.getRotationIntervalMs();
         this.adVersion = adManager.getAdVersion();
 
-        this.currentAdIndex = getPersistedAdIndex();
-        if (this.currentAdIndex >= adUrls.size()) this.currentAdIndex = 0;
+        this.currentAdIndex = 0;
 
-        Log.i(TAG, "Ad catalog loaded from Manager. Total: " + adUrls.size() + " Index: " + currentAdIndex);
-    }
+        // Hide navigation if only one ad exists
+        int navVisibility = ads.size() > 1 ? View.VISIBLE : View.GONE;
+        btnNextAd.setVisibility(navVisibility);
+        btnPrevAd.setVisibility(navVisibility);
 
-    private void completeAd() {
-        LogUtils.i("Ad duration reached. Returning to Home Screen.");
-        StateMachine.getInstance(this).transition(StateEvent.AD_COMPLETED);
-        finish();
-        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+        Log.i(TAG, "Ad catalog loaded from Manager. Total: " + ads.size());
     }
 
     @Override
@@ -156,16 +176,6 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
         super.onStart();
         isVisible = true;
         startRotation();
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        AppState state = StateMachine.getInstance(this).getCurrentState();
-        if (state != AppState.IDLE && state != AppState.IDLE_AD && 
-            state != AppState.SCAN_AD && state != AppState.SCANNING) {
-            finish();
-        }
     }
 
     @Override
@@ -177,18 +187,6 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
         CameraController.getInstance(this).setDetectionEnabled(true);
     }
 
-    private int getPersistedAdIndex() {
-        return getSharedPreferences("ad_rotation_state", MODE_PRIVATE)
-                .getInt("last_ad_index", 0);
-    }
-
-    private void savePersistedAdIndex(int index) {
-        getSharedPreferences("ad_rotation_state", MODE_PRIVATE)
-                .edit()
-                .putInt("last_ad_index", index)
-                .apply();
-    }
-
     private void startRotation() {
         stopRotation();
         showNextAd();
@@ -196,85 +194,92 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
 
     private void stopRotation() {
         rotationHandler.removeCallbacksAndMessages(null);
+        if (vvAd != null) {
+            vvAd.stopPlayback();
+        }
     }
 
     private void showNextAd() {
-        if (!isVisible || adUrls.isEmpty()) return;
+        if (!isVisible || ads.isEmpty()) return;
 
-        if (currentAdIndex >= adUrls.size()) currentAdIndex = 0;
+        if (currentAdIndex >= ads.size()) currentAdIndex = 0;
 
-        String url = adUrls.get(currentAdIndex);
-        Log.i(TAG, "Displaying Ad [" + (currentAdIndex + 1) + "/" + adUrls.size() + "]: " + url);
+        AdManager.AdModel ad = ads.get(currentAdIndex);
+        Log.i(TAG, "Displaying Ad [" + (currentAdIndex + 1) + "/" + ads.size() + "]: " + ad.url + " (" + ad.type + ")");
 
-        // 🚀 Reset rotation timer
         rotationHandler.removeCallbacksAndMessages(null);
 
-        if (url != null && url.startsWith("file:///android_asset/")) {
-            loadFromAssets(url, ivAd);
-            onAdImageVisible(url);
-        } else if (url != null && (url.startsWith("http") || url.startsWith("https"))) {
-            ivAd.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            
-            Glide.with(this)
-                    .load(url)
-                    .diskCacheStrategy(DiskCacheStrategy.ALL)
-                    .signature(new ObjectKey(adVersion))
-                    .transition(DrawableTransitionOptions.withCrossFade())
-                    .listener(new RequestListener<android.graphics.drawable.Drawable>() {
-                        @Override
-                        public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<android.graphics.drawable.Drawable> target, boolean isFirstResource) {
-                            Log.e(TAG, "Ad image load failed: " + url);
-                            if (adUrls.size() > 1) {
-                                currentAdIndex = (currentAdIndex + 1) % adUrls.size();
-                                showNextAd();
-                            } else {
-                                completeAd();
-                            }
-                            return false;
-                        }
-
-                        @Override
-                        public boolean onResourceReady(android.graphics.drawable.Drawable resource, Object model, Target<android.graphics.drawable.Drawable> target, DataSource dataSource, boolean isFirstResource) {
-                            Log.i(TAG, "Ad image ready: " + url);
-                            onAdImageVisible(url);
-                            return false;
-                        }
-                    })
-                    .into(ivAd);
-        }
-
-        // 🚀 Preload the NEXT ad in background
-        if (adUrls.size() > 1) {
-            int nextIndex = (currentAdIndex + 1) % adUrls.size();
-            String nextUrl = adUrls.get(nextIndex);
-            Glide.with(this)
-                    .load(nextUrl)
-                    .diskCacheStrategy(DiskCacheStrategy.ALL)
-                    .signature(new ObjectKey(adVersion))
-                    .preload();
+        if ("video".equals(ad.type)) {
+            playVideoAd(ad);
+        } else {
+            showImageAd(ad);
         }
     }
 
-    private void onAdImageVisible(String url) {
-        recordAdImpression(url);
+    private void showImageAd(AdManager.AdModel ad) {
+        vvAd.setVisibility(View.GONE);
+        ivAd.setVisibility(View.VISIBLE);
+        ivAd.setScaleType(ImageView.ScaleType.CENTER_CROP);
 
-        // 🚀 Session countdown starts ONLY after first image is visible
-        if (!timerStarted) {
-            timerStarted = true;
-            long durationMs = getIntent().getLongExtra(EXTRA_AD_DURATION, 10000);
-            completionHandler.postDelayed(this::completeAd, durationMs);
-            Log.d(TAG, "Ad session timer started: " + durationMs + "ms");
-        }
+        Glide.with(this)
+                .load(ad.url)
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .signature(new ObjectKey(adVersion))
+                .transition(DrawableTransitionOptions.withCrossFade())
+                .listener(new RequestListener<android.graphics.drawable.Drawable>() {
+                    @Override
+                    public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<android.graphics.drawable.Drawable> target, boolean isFirstResource) {
+                        Log.e(TAG, "Ad image load failed: " + ad.url);
+                        moveToNextAd();
+                        return false;
+                    }
 
-        // 🚀 Rotation timer starts ONLY after current image is visible
-        if (adUrls.size() > 1) {
-            rotationHandler.postDelayed(() -> {
-                if (!isVisible) return;
-                currentAdIndex = (currentAdIndex + 1) % adUrls.size();
-                savePersistedAdIndex(currentAdIndex);
-                showNextAd();
-            }, rotationIntervalMs);
-        }
+                    @Override
+                    public boolean onResourceReady(android.graphics.drawable.Drawable resource, Object model, Target<android.graphics.drawable.Drawable> target, DataSource dataSource, boolean isFirstResource) {
+                        Log.i(TAG, "Ad image ready: " + ad.url);
+                        recordAdImpression(ad.url);
+                        
+                        // 🚀 Rotation timer for images (1 minute or as configured)
+                        rotationHandler.postDelayed(() -> moveToNextAd(), rotationIntervalMs);
+                        return false;
+                    }
+                })
+                .into(ivAd);
+    }
+
+    private void playVideoAd(AdManager.AdModel ad) {
+        ivAd.setVisibility(View.GONE);
+        vvAd.setVisibility(View.VISIBLE);
+
+        vvAd.setVideoPath(ad.url);
+        vvAd.setOnPreparedListener(mp -> {
+            mp.setLooping(false);
+            vvAd.start();
+            recordAdImpression(ad.url);
+        });
+
+        vvAd.setOnCompletionListener(mp -> {
+            Log.i(TAG, "Video ad completed: " + ad.url);
+            moveToNextAd();
+        });
+
+        vvAd.setOnErrorListener((mp, what, extra) -> {
+            Log.e(TAG, "Video ad error: " + ad.url + " what=" + what + " extra=" + extra);
+            moveToNextAd();
+            return true;
+        });
+    }
+
+    private void moveToNextAd() {
+        if (!isVisible || ads.isEmpty()) return;
+        currentAdIndex = (currentAdIndex + 1) % ads.size();
+        showNextAd();
+    }
+
+    private void moveToPrevAd() {
+        if (!isVisible || ads.isEmpty()) return;
+        currentAdIndex = (currentAdIndex - 1 + ads.size()) % ads.size();
+        showNextAd();
     }
 
     private void recordAdImpression(String url) {
@@ -328,27 +333,9 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
                 .addOnFailureListener(e -> Log.e(TAG, "Impression sync failed", e));
     }
 
-    private void loadFromAssets(String path, ImageView imageView) {
-        try {
-            String assetPath = path.replace("file:///android_asset/", "");
-            InputStream inputStream = getAssets().open(assetPath);
-            Bitmap bitmap = BitmapFactory.decodeStream(inputStream);
-            imageView.setImageBitmap(bitmap);
-            inputStream.close();
-        } catch (IOException e) {
-            Log.e(TAG, "Error loading asset image", e);
-        }
-    }
-
     @Override
     public void onStateChanged(AppState state) {
-        if (state != AppState.IDLE && state != AppState.IDLE_AD && state != AppState.SCAN_AD) {
-            completionHandler.removeCallbacksAndMessages(null);
-            runOnUiThread(() -> {
-                finish();
-                overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
-            });
-        }
+        // No-op: Slideshow remains visible until manually closed by shopkeeper
     }
 
     private void hideSystemUI() {
@@ -368,6 +355,5 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
         StateMachine.getInstance(this).removeObserver(this);
         AdManager.getInstance(this).removeListener(this);
         stopRotation();
-        completionHandler.removeCallbacksAndMessages(null);
     }
 }

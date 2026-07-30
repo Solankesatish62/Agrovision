@@ -23,6 +23,10 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.materialswitch.MaterialSwitch;
+import com.google.android.material.slider.Slider;
+import android.widget.AutoCompleteTextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
@@ -52,8 +56,12 @@ import com.agrovision.kiosk.util.SoundManager;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.SetOptions;
 
 import java.text.SimpleDateFormat;
+import android.graphics.Color;
+import android.text.SpannableString;
+import android.text.style.ForegroundColorSpan;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
@@ -68,7 +76,7 @@ import java.util.Map;
  * Acts as the COORDINATOR between the vision pipeline and the business logic.
  */
 public final class HomeActivity extends AppCompatActivity
-        implements StateObserver, ScanResultCallback {
+        implements StateObserver, ScanResultCallback, AdManager.OnAdUpdateListener {
 
     private StateMachine stateMachine;
     private CameraController cameraController;
@@ -78,6 +86,11 @@ public final class HomeActivity extends AppCompatActivity
     private BoundingBoxOverlay overlayView;
     private TextView tvDailyScanCount;
     private View progressScanner;
+    private View brandingSeparator;
+    private View shopBrandingContainer;
+    private View shopTextBranding;
+    private android.widget.TextView tvShopName;
+    private android.widget.ImageView ivShopBrandingPoster;
 
     // 🚀 Permission Launcher
     private final ActivityResultLauncher<String> requestPermissionLauncher =
@@ -103,33 +116,7 @@ public final class HomeActivity extends AppCompatActivity
     // Daily Scan Count
     private static final String PREFS_NAME = "scan_stats";
     private static final String KEY_SCAN_COUNT = "scan_count";
-    private static final String KEY_SUCCESSFUL_AD_COUNT = "successful_ad_count";
     private static final String KEY_LAST_DATE = "last_date";
-
-    // 🚀 Idle Ad Timer
-    private final Handler idleHandler = new Handler(Looper.getMainLooper());
-    private static final long IDLE_THRESHOLD_MS = 30_000; // 30 seconds
-    private final Runnable idleRunnable = () -> {
-        AppState currentState = stateMachine.getCurrentState();
-        LogUtils.i("System idle check triggered. Current state: " + currentState);
-        
-        // Only trigger idle ad if we are in a state that represents being "on home" or "ready/scanning"
-        // but no active match was found yet.
-        if (currentState == AppState.READY || currentState == AppState.SCANNING || currentState == AppState.IDLE) {
-            LogUtils.i("System idle threshold reached. Transitioning to AdActivity (IDLE mode).");
-            stateMachine.transition(StateEvent.IDLE_AD_TRIGGERED);
-            
-            Intent intent = new Intent(this, AdActivity.class);
-            intent.putExtra(AdActivity.EXTRA_AD_TYPE, AdActivity.AdType.IDLE);
-            intent.putExtra(AdActivity.EXTRA_AD_DURATION, 15000L); // 15 seconds for idle
-            startActivity(intent);
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
-        } else {
-            LogUtils.d("Skipping idle ad: currently in state " + currentState);
-            // Re-post if we are still active but in a weird state?
-            resetIdleTimer();
-        }
-    };
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -146,8 +133,10 @@ public final class HomeActivity extends AppCompatActivity
         // Camera starts in onResume
         displayCurrentScanCount();
 
-        // 🚀 Initialize Ad Preloading
-        AdManager.getInstance(this);
+        // 🚀 Initialize Ad Preloading & Branding
+        AdManager adManager = AdManager.getInstance(this);
+        adManager.addListener(this);
+        updateBranding(adManager.getShopBrandingType(), adManager.getShopDisplayName(), adManager.getShopBannerUrl());
 
         // 🚀 STEP 3: Check for OTA updates
         new UpdateManager(this).checkForUpdates();
@@ -163,7 +152,6 @@ public final class HomeActivity extends AppCompatActivity
     protected void onStop() {
         super.onStop();
         stateMachine.removeObserver(this);
-        stopIdleTimer(); // Prevent leaks
     }
 
     @Override
@@ -183,7 +171,6 @@ public final class HomeActivity extends AppCompatActivity
         
         // 🚀 RE-BIND CAMERA: Check permissions first
         checkCameraPermission();
-        resetIdleTimer();
 
         // Hide progress if it was left visible
         if (progressScanner != null) {
@@ -204,7 +191,6 @@ public final class HomeActivity extends AppCompatActivity
     @Override
     public void onUserInteraction() {
         super.onUserInteraction();
-        resetIdleTimer(); // Any touch/click resets the timer
     }
 
     private void bindViews() {
@@ -212,47 +198,66 @@ public final class HomeActivity extends AppCompatActivity
         overlayView = findViewById(R.id.overlayView);
         tvDailyScanCount = findViewById(R.id.tvDailyScanCount);
         progressScanner = findViewById(R.id.progressScanner);
+        brandingSeparator = findViewById(R.id.brandingSeparator);
+        shopBrandingContainer = findViewById(R.id.shopBrandingContainer);
+        shopTextBranding = findViewById(R.id.shopTextBranding);
+        tvShopName = findViewById(R.id.tvShopName);
+        ivShopBrandingPoster = findViewById(R.id.ivShopBrandingPoster);
 
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
     }
 
     private void showSettingsDialog() {
         View dialogView = getLayoutInflater().inflate(R.layout.dialog_settings, null);
-        androidx.appcompat.widget.SwitchCompat switchVoice = dialogView.findViewById(R.id.switchVoice);
-        SeekBar seekBarVolume = dialogView.findViewById(R.id.seekBarVolume);
-        Spinner spinnerResultTime = dialogView.findViewById(R.id.spinnerResultTime);
+        MaterialSwitch switchVoice = dialogView.findViewById(R.id.switchVoice);
+        Slider sliderVolume = dialogView.findViewById(R.id.sliderVolume);
+        AutoCompleteTextView spinnerResultTime = dialogView.findViewById(R.id.spinnerResultTime);
+        View btnShowAds = dialogView.findViewById(R.id.btnShowAds);
 
-        ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(this,
-                R.array.result_time_options, android.R.layout.simple_spinner_item);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        // Setup Dropdown for Result Time
+        String[] options = {"30 Seconds (Default)", "45 Seconds", "60 Seconds"};
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, options);
         spinnerResultTime.setAdapter(adapter);
 
         SharedPreferences prefs = getSharedPreferences("kiosk_settings", MODE_PRIVATE);
         switchVoice.setChecked(prefs.getBoolean("voice_enabled", true));
-        seekBarVolume.setProgress(prefs.getInt("voice_volume", 100));
+        sliderVolume.setValue((float) prefs.getInt("voice_volume", 100));
 
         int currentTime = prefs.getInt("RESULT_SCREEN_TIME", 30);
-        int selection = 0;
-        if (currentTime == 45) selection = 1;
-        else if (currentTime == 60) selection = 2;
-        spinnerResultTime.setSelection(selection);
+        if (currentTime == 45) spinnerResultTime.setText(options[1], false);
+        else if (currentTime == 60) spinnerResultTime.setText(options[2], false);
+        else spinnerResultTime.setText(options[0], false);
 
-        new AlertDialog.Builder(this)
-                .setTitle("सेटिंग्ज (Settings)")
+        AlertDialog dialog = new MaterialAlertDialogBuilder(this)
                 .setView(dialogView)
-                .setPositiveButton("जतन करा (Save)", (dialog, which) -> {
+                .setPositiveButton("जतन करा (Save)", (d, which) -> {
                     int selectedTime = 30;
-                    if (spinnerResultTime.getSelectedItemPosition() == 1) selectedTime = 45;
-                    else if (spinnerResultTime.getSelectedItemPosition() == 2) selectedTime = 60;
+                    String selectedText = spinnerResultTime.getText().toString();
+                    if (selectedText.equals(options[1])) selectedTime = 45;
+                    else if (selectedText.equals(options[2])) selectedTime = 60;
 
                     prefs.edit()
                             .putBoolean("voice_enabled", switchVoice.isChecked())
-                            .putInt("voice_volume", seekBarVolume.getProgress())
+                            .putInt("voice_volume", (int) sliderVolume.getValue())
                             .putInt("RESULT_SCREEN_TIME", selectedTime)
                             .apply();
                 })
                 .setNegativeButton("रद्द करा (Cancel)", null)
-                .show();
+                .create();
+
+        // Style the dialog background to be transparent so our MaterialCard corners show
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        }
+
+        btnShowAds.setOnClickListener(v -> {
+            dialog.dismiss();
+            Intent intent = new Intent(this, AdActivity.class);
+            intent.putExtra(AdActivity.EXTRA_AD_TYPE, AdActivity.AdType.SLIDESHOW);
+            startActivity(intent);
+        });
+
+        dialog.show();
     }
 
     private void initDependencies() {
@@ -316,7 +321,6 @@ public final class HomeActivity extends AppCompatActivity
         
         // 🚀 STOP CAMERA PROCESSING
         cameraController.resetPipeline();
-        resetIdleTimer();
         
         // 🚀 SHOW PROGRESS UI
         runOnUiThread(() -> {
@@ -425,9 +429,6 @@ public final class HomeActivity extends AppCompatActivity
                 // Update timestamp only after successful resolution
                 lastScanTime = System.currentTimeMillis();
 
-                // 🚀 Reset idle timer
-                resetIdleTimer();
-
                 if (stateMachine.getCurrentState() == AppState.IDLE) {
                     stateMachine.transition(StateEvent.ACTIVITY_DETECTED);
                 }
@@ -503,12 +504,6 @@ public final class HomeActivity extends AppCompatActivity
     public void onStateChanged(AppState state) {
         LogUtils.i("HomeActivity observed state: " + state);
         
-        // Reset idle timer whenever we enter an active state
-        if (state == AppState.SCANNING || state == AppState.RESULT_AUTO || 
-            state == AppState.RESULT_UNKNOWN || state == AppState.READY) {
-            runOnUiThread(this::resetIdleTimer);
-        }
-
         // If we just finished an ad, make sure we are in READY state and resume scanning
         if (state == AppState.READY) {
             synchronized (this) {
@@ -518,16 +513,62 @@ public final class HomeActivity extends AppCompatActivity
     }
 
     /* =========================================================
-       IDLE TIMER LOGIC
+       SHOP BANNER & AD CALLBACKS
        ========================================================= */
 
-    private void resetIdleTimer() {
-        stopIdleTimer();
-        idleHandler.postDelayed(idleRunnable, IDLE_THRESHOLD_MS);
+    @Override
+    public void onAdsUpdated(List<AdManager.AdModel> ads, long intervalMs, String version) {
+        // Not used on HomeActivity for now
     }
 
-    private void stopIdleTimer() {
-        idleHandler.removeCallbacks(idleRunnable);
+    @Override
+    public void onShopBannerUpdated(String bannerUrl) {
+        // Handled by onBrandingUpdated for the header
+    }
+
+    @Override
+    public void onBrandingUpdated(String type, String name, String url) {
+        runOnUiThread(() -> updateBranding(type, name, url));
+    }
+
+    private void updateBranding(String type, String name, String url) {
+        if (shopBrandingContainer == null) return;
+
+        boolean hasBranding = (type != null && ((type.equals("text") && name != null && !name.isEmpty()) || (type.equals("poster") && url != null && !url.isEmpty())));
+
+        if (!hasBranding) {
+            shopBrandingContainer.setVisibility(View.GONE);
+            brandingSeparator.setVisibility(View.GONE);
+            return;
+        }
+
+        shopBrandingContainer.setVisibility(View.VISIBLE);
+        brandingSeparator.setVisibility(View.VISIBLE);
+
+        if ("poster".equals(type)) {
+            shopTextBranding.setVisibility(View.GONE);
+            ivShopBrandingPoster.setVisibility(View.VISIBLE);
+            com.bumptech.glide.Glide.with(this)
+                    .load(url)
+                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                    .into(ivShopBrandingPoster);
+        } else {
+            ivShopBrandingPoster.setVisibility(View.GONE);
+            shopTextBranding.setVisibility(View.VISIBLE);
+            
+            if (name != null) {
+                SpannableString spannable = new SpannableString(name);
+                int firstSpace = name.indexOf(" ");
+                if (firstSpace > 0) {
+                    // First word Green (#006400), subsequent words Orange (#FF8C00)
+                    spannable.setSpan(new ForegroundColorSpan(Color.parseColor("#006400")), 0, firstSpace, 0);
+                    spannable.setSpan(new ForegroundColorSpan(Color.parseColor("#FF8C00")), firstSpace, name.length(), 0);
+                } else {
+                    spannable.setSpan(new ForegroundColorSpan(Color.parseColor("#006400")), 0, name.length(), 0);
+                }
+                tvShopName.setText(spannable);
+            }
+        }
     }
 
     /* =========================================================
@@ -551,12 +592,6 @@ public final class HomeActivity extends AppCompatActivity
                 .putInt(KEY_SCAN_COUNT, currentCount)
                 .putString(KEY_LAST_DATE, today);
 
-        if (isSuccessful) {
-            int adCounter = prefs.getInt(KEY_SUCCESSFUL_AD_COUNT, 0) + 1;
-            Log.d("AD_DEBUG", "Successful scan count: " + adCounter);
-            editor.putInt(KEY_SUCCESSFUL_AD_COUNT, adCounter);
-        }
-
         editor.apply();
 
         displayCurrentScanCount();
@@ -575,26 +610,16 @@ public final class HomeActivity extends AppCompatActivity
                 .collection("daily_scans")
                 .document(docId);
 
-        docRef.get().addOnSuccessListener(document -> {
-            if (document.exists()) {
-                Long current = document.getLong("scanCount");
-                long newCount = (current != null ? current : 0) + 1;
-                docRef.update("scanCount", newCount,
-                        "lastUpdated", FieldValue.serverTimestamp(),
-                        "shopId", shopId,
-                        "date", today)
-                        .addOnFailureListener(e -> LogUtils.e("Firebase scan update failed", e));
-            } else {
-                Map<String, Object> data = new HashMap<>();
-                data.put("scanCount", 1);
-                data.put("lastUpdated", FieldValue.serverTimestamp());
-                data.put("shopId", shopId);
-                data.put("date", today);
+        // 🚀 OPTIMIZATION: Use FieldValue.increment to avoid unnecessary READ calls.
+        // This reduces Firestore cost by 50% for this operation.
+        Map<String, Object> data = new HashMap<>();
+        data.put("scanCount", FieldValue.increment(1));
+        data.put("lastUpdated", FieldValue.serverTimestamp());
+        data.put("shopId", shopId);
+        data.put("date", today);
 
-                docRef.set(data)
-                        .addOnFailureListener(e -> LogUtils.e("Firebase scan set failed", e));
-            }
-        }).addOnFailureListener(e -> LogUtils.e("Firebase scan fetch failed", e));
+        docRef.set(data, SetOptions.merge())
+                .addOnFailureListener(e -> LogUtils.e("Firebase scan sync failed", e));
     }
 
     private void displayCurrentScanCount() {

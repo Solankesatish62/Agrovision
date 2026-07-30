@@ -17,7 +17,9 @@ import com.agrovision.kiosk.vision.mapping.MedicineMatcher;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * RecognitionPipelineOrchestrator
@@ -30,6 +32,10 @@ public final class RecognitionPipelineOrchestrator {
     private static final String TAG = "RecognitionPipelineOrchestrator";
     private final MedicineRepository repository;
     private List<Medicine> medicineCatalog;
+
+    // 🚀 Result Cache for Phase 5 Optimization
+    private final Map<String, ScanResult> resultCache = new HashMap<>();
+    private static final int MAX_CACHE_SIZE = 50;
 
     public interface BarcodeCallback {
         void onResult(List<ScanResult> results);
@@ -135,12 +141,20 @@ public final class RecognitionPipelineOrchestrator {
         for (String text : normalizedTexts) {
             if (text == null || text.trim().isEmpty()) continue;
 
+            // 🚀 STEP 5: CACHE LOOKUP
+            if (resultCache.containsKey(text)) {
+                Log.d(TAG, "Cache Hit for text: " + text);
+                results.add(resultCache.get(text));
+                continue;
+            }
+
             MatchResult match = MedicineMatcher.match(text, medicineCatalog);
+            ScanResult scanResult;
             if (match.isMatched() && match.getMedicine() != null) {
                 Medicine medicine = match.getMedicine();
                 List<ResultInfoItem> infoItems = ResultInfoMapper.fromMedicine(medicine);
 
-                results.add(new ScanResult(
+                scanResult = new ScanResult(
                         ResultType.KNOWN,
                         medicine.getId(),
                         medicine.getName(),
@@ -149,10 +163,10 @@ public final class RecognitionPipelineOrchestrator {
                         infoItems,
                         text,
                         match.isLowConfidence()
-                ));
+                );
             } else {
                 repository.logUnknownDetection(text, null);
-                results.add(new ScanResult(
+                scanResult = new ScanResult(
                         ResultType.UNKNOWN,
                         null,
                         "Unknown Medicine",
@@ -161,8 +175,15 @@ public final class RecognitionPipelineOrchestrator {
                         Collections.emptyList(),
                         text,
                         false
-                ));
+                );
             }
+
+            // 🚀 ADD TO CACHE
+            if (resultCache.size() > MAX_CACHE_SIZE) {
+                resultCache.clear(); // Simple flush
+            }
+            resultCache.put(text, scanResult);
+            results.add(scanResult);
         }
         PerformanceProfiler.end("Pipeline Resolve");
         return results;

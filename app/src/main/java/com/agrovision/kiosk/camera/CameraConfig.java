@@ -38,9 +38,11 @@ public final class CameraConfig {
     /**
      * Target analysis resolution.
      *
-     * 1080p is preferred for high-quality kiosk cameras to handle glare and distance.
+     * 🚀 CRITICAL MEMORY FIX: Dropping to VGA (640x480).
+     * 720p was still causing SIGKILL on some kiosks due to high allocation churn (72MB/sec).
+     * VGA uses 3x less memory (1.2MB per frame) and is plenty for YOLO detection.
      */
-    public static final Size ANALYSIS_RESOLUTION = new Size(1920, 1080);
+    public static final Size ANALYSIS_RESOLUTION = new Size(640, 480);
 
     /**
      * Image format for analysis.
