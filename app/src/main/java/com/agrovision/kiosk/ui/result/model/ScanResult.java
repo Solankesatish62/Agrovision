@@ -19,6 +19,8 @@ public final class ScanResult implements Parcelable {
     // KNOWN only
     public final String medicineId;
     public final String displayName;
+    public final String company;
+    public final String chemicalName;
     public final List<String> imageUrls;
     public final List<String> audioUrls;
     public final List<ResultInfoItem> infoItems;
@@ -31,6 +33,8 @@ public final class ScanResult implements Parcelable {
             ResultType resultType,
             String medicineId,
             String displayName,
+            String company,
+            String chemicalName,
             List<String> imageUrls,
             List<String> audioUrls,
             List<ResultInfoItem> infoItems,
@@ -40,6 +44,8 @@ public final class ScanResult implements Parcelable {
         this.resultType = resultType;
         this.medicineId = medicineId;
         this.displayName = displayName;
+        this.company = company;
+        this.chemicalName = chemicalName;
         this.imageUrls = imageUrls != null ? imageUrls : new ArrayList<>();
         this.audioUrls = audioUrls != null ? audioUrls : new ArrayList<>();
         this.infoItems = infoItems;
@@ -51,6 +57,8 @@ public final class ScanResult implements Parcelable {
         resultType = (ResultType) in.readSerializable();
         medicineId = in.readString();
         displayName = in.readString();
+        company = in.readString();
+        chemicalName = in.readString();
         
         imageUrls = new ArrayList<>();
         in.readStringList(imageUrls);
@@ -69,6 +77,8 @@ public final class ScanResult implements Parcelable {
         dest.writeSerializable(resultType);
         dest.writeString(medicineId);
         dest.writeString(displayName);
+        dest.writeString(company);
+        dest.writeString(chemicalName);
         dest.writeStringList(imageUrls);
         dest.writeStringList(audioUrls);
         dest.writeTypedList(infoItems);

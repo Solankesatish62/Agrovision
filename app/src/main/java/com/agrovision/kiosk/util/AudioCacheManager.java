@@ -7,7 +7,9 @@ import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -20,7 +22,7 @@ public class AudioCacheManager {
     private static AudioCacheManager instance;
     private final Context context;
     private final File audioCacheDir;
-    private final Map<String, Boolean> downloadInProgress = new HashMap<>();
+    private final Map<String, List<Callback>> pendingCallbacks = new HashMap<>();
     
     // Minimum valid MP3 file size in bytes (e.g., 5KB)
     private static final long MIN_FILE_SIZE = 1024 * 5; 
@@ -96,12 +98,20 @@ public class AudioCacheManager {
         }
 
         String cacheKey = medicineId + "_" + index;
-        synchronized (downloadInProgress) {
-            if (Boolean.TRUE.equals(downloadInProgress.get(cacheKey))) {
-                Log.d(TAG, "Download already in progress for: " + cacheKey);
+        synchronized (pendingCallbacks) {
+            List<Callback> existingCallbacks = pendingCallbacks.get(cacheKey);
+            if (existingCallbacks != null) {
+                Log.d(TAG, "Download already in progress for: " + cacheKey + ". Adding callback.");
+                if (callback != null) {
+                    existingCallbacks.add(callback);
+                }
                 return; 
             }
-            downloadInProgress.put(cacheKey, true);
+            List<Callback> callbacks = new ArrayList<>();
+            if (callback != null) {
+                callbacks.add(callback);
+            }
+            pendingCallbacks.put(cacheKey, callbacks);
         }
 
         Log.d(TAG, "cache lookup started: " + medicineId + " index: " + index);
@@ -127,42 +137,43 @@ public class AudioCacheManager {
                         Log.d(TAG, "local file path: " + finalFile.getAbsolutePath());
                         Log.d(TAG, "file size: " + size + " bytes");
                         
-                        synchronized (downloadInProgress) {
-                            downloadInProgress.remove(cacheKey);
-                        }
-                        if (callback != null) callback.onDownloadCompleted(finalFile.getAbsolutePath());
+                        notifyCallbacks(cacheKey, finalFile.getAbsolutePath(), null);
                     } else {
                         Log.e(TAG, "Failed to rename temp file to final file");
                         tempFile.delete();
-                        synchronized (downloadInProgress) {
-                            downloadInProgress.remove(cacheKey);
-                        }
-                        if (callback != null) callback.onDownloadFailed(new Exception("Rename failed"));
+                        notifyCallbacks(cacheKey, null, new Exception("Rename failed"));
                     }
                 } else {
                     Log.e(TAG, "Downloaded file too small: " + size + " bytes. Rejecting.");
                     tempFile.delete();
-                    synchronized (downloadInProgress) {
-                        downloadInProgress.remove(cacheKey);
-                    }
-                    if (callback != null) callback.onDownloadFailed(new Exception("File too small"));
+                    notifyCallbacks(cacheKey, null, new Exception("File too small"));
                 }
             }).addOnFailureListener(exception -> {
                 Log.e(TAG, "Firebase download failed: " + medicineId + " index: " + index, exception);
-                synchronized (downloadInProgress) {
-                    downloadInProgress.remove(cacheKey);
-                }
                 if (tempFile.exists()) {
                     tempFile.delete();
                 }
-                if (callback != null) callback.onDownloadFailed(exception);
+                notifyCallbacks(cacheKey, null, exception);
             });
         } catch (Exception e) {
             Log.e(TAG, "Error initializing download for: " + medicineId + " index: " + index, e);
-            synchronized (downloadInProgress) {
-                downloadInProgress.remove(cacheKey);
+            notifyCallbacks(cacheKey, null, e);
+        }
+    }
+
+    private void notifyCallbacks(String cacheKey, String path, Exception e) {
+        List<Callback> callbacks;
+        synchronized (pendingCallbacks) {
+            callbacks = pendingCallbacks.remove(cacheKey);
+        }
+        if (callbacks != null) {
+            for (Callback cb : callbacks) {
+                if (e == null) {
+                    cb.onDownloadCompleted(path);
+                } else {
+                    cb.onDownloadFailed(e);
+                }
             }
-            if (callback != null) callback.onDownloadFailed(e);
         }
     }
 }

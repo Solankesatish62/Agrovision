@@ -8,8 +8,10 @@ import androidx.room.RoomDatabase;
 import androidx.room.TypeConverters;
 
 import com.agrovision.kiosk.data.database.converter.StringListConverter;
+import com.agrovision.kiosk.data.database.dao.AdvertisementDao;
 import com.agrovision.kiosk.data.database.dao.MedicineDao;
 import com.agrovision.kiosk.data.database.dao.UnknownDetectionDao;
+import com.agrovision.kiosk.data.database.entity.AdvertisementEntity;
 import com.agrovision.kiosk.data.database.entity.MedicineEntity;
 import com.agrovision.kiosk.data.database.entity.UnknownDetectionEntity;
 
@@ -31,9 +33,10 @@ import com.agrovision.kiosk.data.database.entity.UnknownDetectionEntity;
 @Database(
         entities = {
                 MedicineEntity.class,
-                UnknownDetectionEntity.class
+                UnknownDetectionEntity.class,
+                AdvertisementEntity.class
         },
-        version = 4,
+        version = 6,
         exportSchema = false
 )
 @TypeConverters({
@@ -85,4 +88,9 @@ public abstract class AppDatabase extends RoomDatabase {
      * Provides access to Unknown Detection DAO.
      */
     public abstract UnknownDetectionDao unknownDetectionDao();
+
+    /**
+     * Provides access to Advertisement DAO.
+     */
+    public abstract AdvertisementDao advertisementDao();
 }

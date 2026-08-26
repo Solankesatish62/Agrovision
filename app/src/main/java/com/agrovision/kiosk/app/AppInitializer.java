@@ -9,6 +9,8 @@ import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 
 import com.agrovision.kiosk.analytics.EventTracker;
+import com.agrovision.kiosk.sync.KioskSyncWorker;
+import com.agrovision.kiosk.sync.SyncManager;
 import com.agrovision.kiosk.sync.SyncWorker;
 import com.agrovision.kiosk.threading.IoExecutor;
 import com.agrovision.kiosk.util.LogUtils;
@@ -72,6 +74,11 @@ public final class AppInitializer {
             EventTracker.getInstance(appContext).initAsync();
             scheduleBackgroundSync(appContext);
             scheduleHeartbeat(appContext);
+            scheduleKioskSync(appContext);
+            
+            // Immediate Sync on Boot
+            SyncManager.getInstance(appContext).startSync();
+
             LogUtils.i("AppInitializer: background services ready");
         });
 
@@ -100,6 +107,29 @@ public final class AppInitializer {
                 syncRequest
         );
         LogUtils.i("AppInitializer: Background sync scheduled");
+    }
+
+    /**
+     * Schedules periodic kiosk synchronization for medicines and advertisements.
+     * Interval: 1 hour (Optimized for kiosk data)
+     */
+    private static void scheduleKioskSync(Context context) {
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build();
+
+        PeriodicWorkRequest syncRequest = new PeriodicWorkRequest.Builder(
+                KioskSyncWorker.class,
+                1, TimeUnit.HOURS)
+                .setConstraints(constraints)
+                .build();
+
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                "KioskDataSync",
+                ExistingPeriodicWorkPolicy.KEEP,
+                syncRequest
+        );
+        LogUtils.i("AppInitializer: Kiosk data sync scheduled");
     }
 
     /**

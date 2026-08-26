@@ -26,27 +26,35 @@ public final class HeartbeatWorker extends Worker {
     @Override
     public Result doWork() {
         SharedPreferences prefs = getApplicationContext().getSharedPreferences("kiosk_settings", Context.MODE_PRIVATE);
-        String shopId = prefs.getString("shop_mobile", null);
-        String shopName = prefs.getString("shop_name", "Unknown");
+        
+        // 1. Get Kiosk ID (This is our document ID in 'kiosks' collection)
+        String kioskId = prefs.getString("kiosk_id", null);
+        if (kioskId == null) {
+            kioskId = prefs.getString("shop_mobile", null); // Legacy fallback
+        }
 
-        if (shopId == null) {
+        if (kioskId == null) {
             return Result.success(); // Not registered yet
         }
+
+        // 2. Get Shop ID (The linked account ID)
+        String shopId = prefs.getString("shop_id", prefs.getString("shop_mobile", null));
+        String shopName = prefs.getString("shop_name", "Unknown");
 
         Map<String, Object> heartbeat = new HashMap<>();
         heartbeat.put("lastActiveTimestamp", System.currentTimeMillis());
         heartbeat.put("appVersion", BuildConfig.VERSION_NAME);
         heartbeat.put("shopName", shopName);
-        // Do NOT set status here, let KioskStatusManager handle the lifecycle-based status.
-        // Or set it to ONLINE only if we are absolutely sure the app is "Live".
-        // For now, we update the timestamp but don't force ONLINE if it was set to OFFLINE.
+        if (shopId != null) {
+            heartbeat.put("shopId", shopId);
+        }
         heartbeat.put("deviceId", android.os.Build.MODEL);
 
         try {
             FirebaseFirestore.getInstance().collection("kiosks")
-                    .document(shopId)
+                    .document(kioskId)
                     .set(heartbeat, SetOptions.merge());
-            Log.d(TAG, "Heartbeat synced for " + shopId);
+            Log.d(TAG, "Heartbeat synced for " + kioskId);
             return Result.success();
         } catch (Exception e) {
             Log.e(TAG, "Heartbeat failed", e);

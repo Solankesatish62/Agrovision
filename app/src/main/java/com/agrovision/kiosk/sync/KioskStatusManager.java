@@ -75,9 +75,14 @@ public final class KioskStatusManager {
 
     private void sendUpdate(String status) {
         SharedPreferences prefs = appContext.getSharedPreferences("kiosk_settings", Context.MODE_PRIVATE);
-        String shopId = prefs.getString("shop_mobile", null);
+        String kioskId = prefs.getString("kiosk_id", null);
+        
+        // Fallback to shop_mobile if kiosk_id is not set (for manual registrations)
+        if (kioskId == null) {
+            kioskId = prefs.getString("shop_mobile", null);
+        }
 
-        if (shopId == null) return;
+        if (kioskId == null) return;
 
         Map<String, Object> data = new HashMap<>();
         data.put("lastActiveTimestamp", System.currentTimeMillis());
@@ -86,7 +91,7 @@ public final class KioskStatusManager {
         data.put("deviceId", android.os.Build.MODEL);
 
         FirebaseFirestore.getInstance().collection("kiosks")
-                .document(shopId)
+                .document(kioskId)
                 .set(data, SetOptions.merge())
                 .addOnFailureListener(e -> Log.w(TAG, "Failed to update status to " + status, e));
     }

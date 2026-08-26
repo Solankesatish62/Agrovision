@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.KeyEvent;
 import android.widget.TextView;
 
 import androidx.annotation.Nullable;
@@ -39,6 +40,20 @@ public final class UnknownActivity extends AppCompatActivity {
 
         // Auto-close after 10 seconds
         new Handler(Looper.getMainLooper()).postDelayed(this::finish, 10000);
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            int keyCode = event.getKeyCode();
+            // 🚀 Listen for HOME, ESCAPE, or BACK key on physical keyboard to return to scan
+            if (keyCode == KeyEvent.KEYCODE_MOVE_HOME || keyCode == KeyEvent.KEYCODE_ESCAPE || 
+                keyCode == KeyEvent.KEYCODE_HOME || keyCode == KeyEvent.KEYCODE_BACK) {
+                finish();
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     private void hideSystemUI() {

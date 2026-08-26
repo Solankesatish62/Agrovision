@@ -30,7 +30,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="#000000"
-                android:textSize="56sp"
+                android:textSize="40sp"
                 android:textStyle="bold"
                 tools:text="Medicine Name" />
 
@@ -53,13 +53,41 @@
                 app:tint="#4CAF50" />
         </LinearLayout>
 
+        <LinearLayout
+            android:id="@+id/secondaryInfoContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="24dp"
+            android:orientation="vertical"
+            app:layout_constraintBottom_toBottomOf="@id/titleContainer"
+            app:layout_constraintStart_toEndOf="@id/titleContainer"
+            app:layout_constraintTop_toTopOf="@id/titleContainer">
+
+            <TextView
+                android:id="@+id/tvManufacturer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#666666"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                tools:text="Company Name" />
+
+            <TextView
+                android:id="@+id/tvChemicalComposition"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#888888"
+                android:textSize="14sp"
+                tools:text="Chemical Composition" />
+        </LinearLayout>
+
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/infoList"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="12dp"
             android:layout_marginEnd="32dp"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="8dp"
             app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
             app:layout_constraintBottom_toTopOf="@+id/tvFooterTip"
             app:layout_constraintEnd_toStartOf="@+id/guidelineCenter"
@@ -74,7 +102,7 @@
             android:gravity="center"
             android:text="टीप: परिस्थितीनुसार परिणाम बदलू शकतो"
             android:textColor="#AAAAAA"
-            android:textSize="20sp"
+            android:textSize="16sp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toStartOf="@+id/guidelineCenter"
             app:layout_constraintStart_toStartOf="parent" />

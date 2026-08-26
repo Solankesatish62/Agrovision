@@ -81,15 +81,15 @@ public final class StateRules {
         Map<StateEvent, AppState> scanAd = new EnumMap<>(StateEvent.class);
         scanAd.put(StateEvent.AD_COMPLETED, AppState.READY);
         scanAd.put(StateEvent.ACTIVITY_DETECTED, AppState.READY);
+        scanAd.put(StateEvent.OBJECT_DETECTED, AppState.SCANNING);
         transitionTable.put(AppState.SCAN_AD, scanAd);
 
         // ================= IDLE_AD =================
         Map<StateEvent, AppState> idleAd = new EnumMap<>(StateEvent.class);
         idleAd.put(StateEvent.AD_COMPLETED, AppState.READY);
         idleAd.put(StateEvent.ACTIVITY_DETECTED, AppState.READY);
-        // 🚀 CRITICAL: Removed OBJECT_DETECTED -> SCANNING transition here.
-        // We only wake up from Idle Ads on real touch or confirmed medicine detection (OCR).
-        // This prevents "jumpy" camera noise from closing the advertisement prematurely.
+        // 🚀 WAKE UP from ads when medicine is detected
+        idleAd.put(StateEvent.OBJECT_DETECTED, AppState.SCANNING);
         transitionTable.put(AppState.IDLE_AD, idleAd);
     }
 

@@ -43,6 +43,13 @@
             android:screenOrientation="landscape"
             android:theme="@style/Theme.Agrovision.Fullscreen" />
 
+        <!-- Pairing Screen -->
+        <activity
+            android:name=".ui.register.PairingActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.Agrovision.Fullscreen" />
+
         <!-- Home Screen (Scanning) -->
         <activity
             android:name=".ui.home.HomeActivity"
@@ -63,6 +70,7 @@
         <activity
             android:name=".ui.result.ResultActivity"
             android:exported="false"
+            android:launchMode="singleTask"
             android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.Agrovision.Fullscreen" />

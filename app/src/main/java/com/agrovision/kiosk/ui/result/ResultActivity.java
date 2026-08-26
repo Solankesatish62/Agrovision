@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.ImageButton;
 import android.widget.TextView;
@@ -57,7 +58,10 @@ public final class ResultActivity extends AppCompatActivity
 
     private static final long AUTO_ROTATE_MS = 60_000;
     private static final long UNKNOWN_TIMEOUT_MS = 3_000;
-    private static final long PAUSE_TIMEOUT_MS = 120_000;
+
+    // Persistent history of last 10 unique medicines
+    private static final List<ScanResult> HISTORY = new ArrayList<>();
+    private static final int MAX_HISTORY_SIZE = 10;
 
     // UI controls
     private ImageButton btnNext;
@@ -73,6 +77,7 @@ public final class ResultActivity extends AppCompatActivity
 
     // State
     private List<ScanResult> scanResults;
+    private int currentScanCount = 0; // 🚀 Keep track of items from the ACTUAL current scan
     private int currentIndex = 0;
     private boolean isPaused = false;
 
@@ -87,16 +92,18 @@ public final class ResultActivity extends AppCompatActivity
 
     private final Runnable autoRotateRunnable = () -> {
         LogUtils.d("Timer triggered: automatically showing next result");
-        showNextResult();
+        // 🚀 BUG FIX: Auto-timer should only cycle through CURRENT scan results, then exit.
+        // It should NOT automatically move into history (previous scans).
+        if (currentIndex + 1 < currentScanCount) {
+            showNextResult();
+        } else {
+            LogUtils.i("End of current scan results reached. Returning to home.");
+            returnToScan();
+        }
     };
 
     private final Runnable unknownTimeoutRunnable = () -> {
         LogUtils.i("Unknown result timeout: returning to scan");
-        returnToScan();
-    };
-
-    private final Runnable pauseTimeoutRunnable = () -> {
-        LogUtils.i("Pause timer expired: returning to scan");
         returnToScan();
     };
 
@@ -188,6 +195,20 @@ public final class ResultActivity extends AppCompatActivity
     protected void onResume() {
         super.onResume();
         hideSystemUI();
+        // 🚀 Optimization: Only render if we don't have results yet
+        // otherwise let the state machine or navigation handle it
+        if (scanResults != null && !scanResults.isEmpty()) {
+            renderCurrent();
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        LogUtils.i("Received new intent in ResultActivity - updating results");
+        stopAudio();
+        loadResults();
         renderCurrent();
     }
 
@@ -204,11 +225,14 @@ public final class ResultActivity extends AppCompatActivity
         View standardLayout = findViewById(R.id.standardResultLayout);
         View unknownLayout = findViewById(R.id.unknownResultLayout);
         TextView tvMedicineName = findViewById(R.id.tvMedicineName);
+        TextView tvManufacturer = findViewById(R.id.tvManufacturer);
+        TextView tvChemicalComposition = findViewById(R.id.tvChemicalComposition);
         infoList = findViewById(R.id.infoList);
         TextView tvUnknownHeader = findViewById(R.id.tvUnknownHeader);
 
         renderer = new ResultRenderer(
                 standardLayout, unknownLayout, tvMedicineName,
+                tvManufacturer, tvChemicalComposition,
                 imagePager, infoList, tvUnknownHeader
         );
 
@@ -228,7 +252,63 @@ public final class ResultActivity extends AppCompatActivity
     }
 
     private void loadResults() {
-        scanResults = getIntent().getParcelableArrayListExtra(EXTRA_SCAN_RESULTS);
+        ArrayList<ScanResult> currentScan = getIntent().getParcelableArrayListExtra(EXTRA_SCAN_RESULTS);
+
+        // 🚀 RESET indices when loading new results
+        lastPlayedIndex = -1;
+        currentAudioIndex = 0;
+
+        if (currentScan != null) {
+            // Update history with KNOWN medicines from current scan (in reverse to maintain order when adding at 0)
+            for (int i = currentScan.size() - 1; i >= 0; i--) {
+                ScanResult res = currentScan.get(i);
+                if (res.resultType == ResultType.KNOWN) {
+                    // Remove existing entry for same medicine to move it to the front
+                    HISTORY.removeIf(h -> h.medicineId != null && h.medicineId.equals(res.medicineId));
+                    HISTORY.add(0, res);
+                }
+            }
+
+            // Keep history to 10
+            while (HISTORY.size() > MAX_HISTORY_SIZE) {
+                HISTORY.remove(HISTORY.size() - 1);
+            }
+        }
+
+        // Build the list to display:
+        // 1. Current scan results (including UNKNOWN)
+        // 2. History of previous scans (excluding those already in current scan)
+        List<ScanResult> displayList = new ArrayList<>();
+        if (currentScan != null) {
+            displayList.addAll(currentScan);
+            currentScanCount = currentScan.size();
+        } else {
+            currentScanCount = 0;
+        }
+
+        for (ScanResult hist : HISTORY) {
+            boolean alreadyInScan = false;
+            if (currentScan != null) {
+                for (ScanResult curr : currentScan) {
+                    if (curr.medicineId != null && curr.medicineId.equals(hist.medicineId)) {
+                        alreadyInScan = true;
+                        break;
+                    }
+                }
+            }
+            if (!alreadyInScan) {
+                displayList.add(hist);
+            }
+        }
+
+        // Final limit to 10 items total
+        if (displayList.size() > MAX_HISTORY_SIZE) {
+            scanResults = new ArrayList<>(displayList.subList(0, MAX_HISTORY_SIZE));
+        } else {
+            scanResults = displayList;
+        }
+
+        currentIndex = 0;
     }
 
     private void returnToScan() {
@@ -265,8 +345,14 @@ public final class ResultActivity extends AppCompatActivity
 
         btnPause.setOnClickListener(v -> {
             LogUtils.i("Pause button clicked");
-            StateMachine.getInstance(getApplicationContext())
-                    .transition(isPaused ? StateEvent.RESUME_REQUESTED : StateEvent.PAUSE_REQUESTED);
+            AppState currentState = StateMachine.getInstance(getApplicationContext()).getCurrentState();
+            if (currentState == AppState.RESULT_PAUSED) {
+                LogUtils.d("Requesting RESUME");
+                StateMachine.getInstance(getApplicationContext()).transition(StateEvent.RESUME_REQUESTED);
+            } else {
+                LogUtils.d("Requesting PAUSE");
+                StateMachine.getInstance(getApplicationContext()).transition(StateEvent.PAUSE_REQUESTED);
+            }
         });
 
         if (btnMute != null) {
@@ -298,6 +384,7 @@ public final class ResultActivity extends AppCompatActivity
     }
 
     private void renderCurrent() {
+        LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: renderCurrent() START. currentIndex=" + currentIndex + ", lastPlayedIndex=" + lastPlayedIndex);
         if (scanResults == null || scanResults.isEmpty()) {
             LogUtils.i("No results available for navigation");
             return;
@@ -306,11 +393,20 @@ public final class ResultActivity extends AppCompatActivity
         ScanResult current = scanResults.get(currentIndex);
         renderer.render(current);
 
-        // Audio playback - only trigger if index changed or forced
-        if (lastPlayedIndex != currentIndex) {
+        // Audio playback - only trigger if medicine changed
+        String currentId = current.medicineId != null ? current.medicineId : "unknown_" + currentIndex;
+        String lastId = (lastPlayedIndex != -1 && lastPlayedIndex < scanResults.size())
+                ? scanResults.get(lastPlayedIndex).medicineId : null;
+        if (lastId == null && lastPlayedIndex != -1) lastId = "unknown_" + lastPlayedIndex;
+
+        LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: ID Check -> current=" + currentId + ", last=" + lastId);
+        if (!currentId.equals(lastId)) {
+            LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: TRIGGERING NEW AUDIO");
+            lastPlayedIndex = currentIndex;
             this.currentAudioIndex = 0;
             playCurrentAudio();
-            lastPlayedIndex = currentIndex;
+        } else {
+            LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: SKIP AUDIO (Same Medicine)");
         }
 
         // Reset image rotation for new medicine
@@ -323,20 +419,21 @@ public final class ResultActivity extends AppCompatActivity
 
         // Reset medicine auto-rotate timer
         stopTimer();
+        updatePauseButtonState();
+
+        if (isPaused) {
+            LogUtils.d("Timer reset blocked due to pause. Pause timer remains active.");
+            return;
+        }
 
         if (current.resultType == ResultType.UNKNOWN) {
             timerHandler.postDelayed(unknownTimeoutRunnable, UNKNOWN_TIMEOUT_MS);
             LogUtils.d("Unknown result timer started: 3s");
-        } else if (!isPaused) {
+        } else {
             int timeSec = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
                     .getInt("RESULT_SCREEN_TIME", 30);
             timerHandler.postDelayed(autoRotateRunnable, (long) timeSec * 1000);
             LogUtils.d("Configured timer started: " + timeSec + "s");
-        } else {
-            LogUtils.d("Timer reset blocked due to pause. Pause timer remains active.");
-            // We refresh the pause timer to give 2 minutes from last navigation/action
-            timerHandler.postDelayed(pauseTimeoutRunnable, PAUSE_TIMEOUT_MS);
-            LogUtils.d("Pause timer refreshed: 120s");
         }
 
         updatePauseButtonState();
@@ -379,7 +476,6 @@ public final class ResultActivity extends AppCompatActivity
 
         if (currentIndex + 1 < scanResults.size()) {
             currentIndex++;
-            isPaused = false;
             renderCurrent();
         } else {
             LogUtils.i("All results displayed. Returning to scan.");
@@ -392,7 +488,6 @@ public final class ResultActivity extends AppCompatActivity
 
         if (currentIndex > 0) {
             currentIndex--;
-            isPaused = false;
             renderCurrent();
         } else {
             LogUtils.d("Already at first result");
@@ -409,22 +504,27 @@ public final class ResultActivity extends AppCompatActivity
     public void onStateChanged(AppState state) {
         runOnUiThread(() -> {
             LogUtils.d("ResultActivity observed state: " + state);
+            
+            // Sync local isPaused with actual StateMachine state
+            boolean wasPaused = isPaused;
+            isPaused = (state == AppState.RESULT_PAUSED);
+            
+            if (wasPaused != isPaused) {
+                updatePauseButtonState();
+            }
+
             switch (state) {
                 case RESULT_PAUSED:
-                    LogUtils.i("Pause override activated - temporarily overriding timer");
-                    isPaused = true;
+                    LogUtils.i("Pause mode activated - stopping timers");
                     stopTimer();
-                    timerHandler.postDelayed(pauseTimeoutRunnable, PAUSE_TIMEOUT_MS);
-                    LogUtils.d("Pause timer started: 120s");
-                    updatePauseButtonState();
                     break;
 
                 case RESULT_AUTO:
                 case RESULT_MANUAL_NAV:
-                    if (isPaused) {
-                        LogUtils.i("Normal timer restored - pause ended");
+                case RESULT_UNKNOWN:
+                    if (wasPaused && !isPaused) {
+                        LogUtils.i("Pause mode ended - resuming timers");
                     }
-                    isPaused = false;
                     renderCurrent();
                     break;
 
@@ -448,6 +548,7 @@ public final class ResultActivity extends AppCompatActivity
     private void playCurrentAudio() {
         boolean voiceEnabled = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
                 .getBoolean("voice_enabled", true);
+        LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: playCurrentAudio() voiceEnabled=" + voiceEnabled + ", isAudioPlaying=" + isAudioPlaying);
 
         if (btnMute != null) {
             btnMute.setImageResource(voiceEnabled 
@@ -455,7 +556,7 @@ public final class ResultActivity extends AppCompatActivity
                 : android.R.drawable.ic_lock_silent_mode);
         }
 
-        if (scanResults == null || currentIndex >= scanResults.size() || isPaused || !voiceEnabled) {
+        if (scanResults == null || currentIndex >= scanResults.size() || !voiceEnabled) {
             stopAudio();
             return;
         }
@@ -464,42 +565,38 @@ public final class ResultActivity extends AppCompatActivity
         List<String> urls = current.audioUrls;
 
         if (urls == null || urls.isEmpty() || currentAudioIndex >= urls.size()) {
+            LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: No more audio segments.");
             stopAudio();
             return;
         }
 
         String path = urls.get(currentAudioIndex);
+        LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: Playing segment " + currentAudioIndex + " for " + current.displayName);
         playAudio(current.medicineId, currentAudioIndex, path);
     }
 
     private void playAudio(String medicineId, int index, String url) {
+        LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: playAudio() START medicineId=" + medicineId + ", index=" + index);
         PerformanceProfiler.start("Audio Ready");
         Log.d("AUDIO", "Play requested for: " + medicineId + " index: " + index);
 
-        if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-            Log.d("AUDIO", "Skipping: already playing");
-            PerformanceProfiler.end("Audio Ready");
-            return;
-        }
-
         AudioCacheManager cacheManager = AudioCacheManager.getInstance(this);
-        PerformanceProfiler.start("Audio Cache Lookup");
         String cachedPath = cacheManager.getCachedAudioPath(medicineId, index);
-        PerformanceProfiler.end("Audio Cache Lookup");
 
         if (cachedPath == null) {
-            Log.d("AUDIO", "cache miss: " + medicineId + " index: " + index);
-            Log.d("AUDIO", "Cache MISS - downloading: " + url);
+            LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: Cache Miss, downloading...");
             cacheManager.prefetchAudio(medicineId, index, url, new AudioCacheManager.Callback() {
                 @Override
                 public void onDownloadCompleted(String path) {
-                    // Check if this result is still the one being shown
                     runOnUiThread(() -> {
+                        LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: Download COMPLETED callback for " + medicineId);
                         if (scanResults != null && currentIndex < scanResults.size()) {
                             ScanResult current = scanResults.get(currentIndex);
                             if (current.medicineId.equals(medicineId) && currentAudioIndex == index) {
-                                Log.d("AUDIO", "Download completed for current result, starting playback");
-                                playAudio(medicineId, index, url); // Re-call to play from cached path
+                                LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: Condition met, starting playback after download");
+                                playAudio(medicineId, index, url); 
+                            } else {
+                                LogUtils.w("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: Condition NOT met (medicine or index changed)");
                             }
                         }
                     });
@@ -507,14 +604,17 @@ public final class ResultActivity extends AppCompatActivity
 
                 @Override
                 public void onDownloadFailed(Exception e) {
-                    Log.e("AUDIO", "Download failed during play attempt", e);
-                    PerformanceProfiler.end("Audio Ready");
+                    LogUtils.e("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: Download FAILED", e);
                 }
             });
             return; 
         }
 
-        Log.d("AUDIO", "cache hit: " + medicineId + " index: " + index + " path: " + cachedPath);
+        LogUtils.i("AUDIO_DEBUG [" + System.identityHashCode(this) + "]: Cache HIT, preparing player...");
+        
+        // 🚀 STOP PREVIOUS BEFORE STARTING NEW
+        stopAudio();
+
         isAudioPlaying = true;
         Log.d("AUDIO", "START PLAY from local cache: " + cachedPath);
         Log.d("AUDIO", "local file path: " + cachedPath);
@@ -599,11 +699,12 @@ public final class ResultActivity extends AppCompatActivity
     }
 
     private void stopAudio() {
+        LogUtils.d("AUDIO_DEBUG: stopAudio() called");
         if (mediaPlayer != null) {
             try {
                 // Remove stop() to avoid error -38 in certain states
                 mediaPlayer.release();
-                Log.d("AUDIO", "MediaPlayer released");
+                LogUtils.d("AUDIO_DEBUG: MediaPlayer released");
             } catch (Exception e) {
                 LogUtils.e("Error releasing MediaPlayer", e);
             }
@@ -630,6 +731,42 @@ public final class ResultActivity extends AppCompatActivity
                 LogUtils.i("Back navigation is blocked in kiosk mode");
             }
         });
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            int keyCode = event.getKeyCode();
+            
+            // 🚀 Support keyboard pause/play (Space, P, or Pause key)
+            if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_P || 
+                keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || keyCode == KeyEvent.KEYCODE_BREAK) {
+                LogUtils.i("Pause/Play key pressed on keyboard");
+                if (btnPause != null) btnPause.performClick();
+                return true;
+            }
+
+            // 🚀 Support keyboard navigation (Arrows)
+            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                LogUtils.d("Forward navigation key pressed");
+                showNextResult();
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                LogUtils.d("Backward navigation key pressed");
+                showPreviousResult();
+                return true;
+            }
+
+            // 🚀 Listen for HOME, ESCAPE, or BACK key on physical keyboard to return to scan
+            if (keyCode == KeyEvent.KEYCODE_MOVE_HOME || keyCode == KeyEvent.KEYCODE_ESCAPE || 
+                keyCode == KeyEvent.KEYCODE_HOME || keyCode == KeyEvent.KEYCODE_BACK) {
+                LogUtils.i("Navigation key pressed on keyboard - returning to scan");
+                returnToScan();
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     private void hideSystemUI() {

@@ -5,8 +5,10 @@ import android.util.Log;
 
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
-import com.google.firebase.firestore.DocumentSnapshot;
-import com.google.firebase.firestore.FirebaseFirestore;
+import com.agrovision.kiosk.data.database.AppDatabase;
+import com.agrovision.kiosk.data.database.entity.AdvertisementEntity;
+import com.agrovision.kiosk.sync.SyncManager;
+import com.agrovision.kiosk.threading.IoExecutor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,10 +37,12 @@ public final class AdManager {
     public static class AdModel {
         public String url;
         public String type; // "image" or "video"
+        public int duration; // in seconds
 
-        public AdModel(String url, String type) {
+        public AdModel(String url, String type, int duration) {
             this.url = url;
             this.type = type;
+            this.duration = duration;
         }
 
         @Override
@@ -46,12 +50,12 @@ public final class AdManager {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             AdModel adModel = (AdModel) o;
-            return Objects.equals(url, adModel.url) && Objects.equals(type, adModel.type);
+            return duration == adModel.duration && Objects.equals(url, adModel.url) && Objects.equals(type, adModel.type);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(url, type);
+            return Objects.hash(url, type, duration);
         }
     }
 
@@ -63,7 +67,8 @@ public final class AdManager {
 
     private AdManager(Context context) {
         this.context = context.getApplicationContext();
-        startAdSync();
+        loadAdsFromCache();
+        SyncManager.getInstance(context).startSync();
     }
 
     public static synchronized AdManager getInstance(Context context) {
@@ -73,145 +78,63 @@ public final class AdManager {
         return instance;
     }
 
-    private void startAdSync() {
-        String shopId = context.getSharedPreferences("kiosk_settings", Context.MODE_PRIVATE)
-                .getString("shop_mobile", "910000000000");
-
-        Log.i(TAG, "Starting Ad Sync for shop: " + shopId);
-
-        FirebaseFirestore.getInstance().collection("kiosk_ads")
-                .document(shopId)
-                .addSnapshotListener((value, error) -> {
-                    if (error != null) {
-                        Log.e(TAG, "Ad Sync Error: " + error.getMessage());
-                        return;
-                    }
-                    // 🚀 Always process the snapshot (to handle deletion/clearance)
-                    if (value != null) {
-                        updateAdList(value);
-                    }
-                });
+    private void loadAdsFromCache() {
+        IoExecutor.submit(() -> {
+            long now = System.currentTimeMillis();
+            List<AdvertisementEntity> entities = AppDatabase.getInstance(context)
+                    .advertisementDao()
+                    .getActiveAds(now);
+            
+            List<AdModel> newAds = new ArrayList<>();
+            for (AdvertisementEntity e : entities) {
+                String url = "video".equals(e.type) ? e.videoUrl : e.imageUrl;
+                newAds.add(new AdModel(url, e.type, e.duration));
+            }
+            
+            updateAdListLocal(newAds);
+        });
     }
 
-    @SuppressWarnings("unchecked")
-    private void updateAdList(DocumentSnapshot doc) {
-        List<AdModel> newAds = new ArrayList<>();
-        long newIntervalMs = 60000; // Default 1 minute
-        String newBannerUrl = null;
-        String newDisplayName = null;
-        String newBrandingType = "text";
+    public void updateAdsLocal() {
+        loadAdsFromCache();
+    }
 
-        if (doc.exists()) {
-            newBannerUrl = doc.getString("shopBannerUrl");
-            newDisplayName = doc.getString("shopDisplayName");
-            newBrandingType = doc.getString("shopBrandingType");
-            if (newBrandingType == null) newBrandingType = "text";
-
-            // 1. Check modern 'ads' field (List of Maps or Map of Maps)
-            Object adsObj = doc.get("ads");
-            if (adsObj instanceof List) {
-                List<Map<String, Object>> adsList = (List<Map<String, Object>>) adsObj;
-                for (Map<String, Object> adMap : adsList) {
-                    if (isAdActive(adMap)) {
-                        addAdFromMap(adMap, newAds);
-                    }
-                }
-            } else if (adsObj instanceof Map) {
-                Map<String, Object> adsMap = (Map<String, Object>) adsObj;
-                for (Object value : adsMap.values()) {
-                    if (value instanceof Map) {
-                        Map<String, Object> adMap = (Map<String, Object>) value;
-                        if (isAdActive(adMap)) {
-                            addAdFromMap(adMap, newAds);
-                        }
-                    }
-                }
-            }
-
-            // 2. Check legacy 'ad_list' (List of strings) - assume images
-            if (newAds.isEmpty()) {
-                Object adListObj = doc.get("ad_list");
-                if (adListObj instanceof List) {
-                    for (Object item : (List<?>) adListObj) {
-                        if (item instanceof String && !((String) item).isEmpty()) {
-                            newAds.add(new AdModel((String) item, "image"));
-                        }
-                    }
-                }
-            }
-            
-            // 3. Check 'imageUrl' (Single string)
-            if (newAds.isEmpty()) {
-                String singleUrl = doc.getString("imageUrl");
-                if (singleUrl != null && !singleUrl.isEmpty()) {
-                    newAds.add(new AdModel(singleUrl, "image"));
-                }
-            }
-
-            Long interval = doc.getLong("interval_seconds");
-            newIntervalMs = interval != null ? interval * 1000 : 60000;
-        } else {
-            Log.w(TAG, "Ad document deleted or missing. Clearing local ad queue.");
-        }
-
-        // 🚀 Detect changes
-        boolean changed = !newAds.equals(ads) || (newIntervalMs != rotationIntervalMs);
-        boolean bannerChanged = !Objects.equals(newBannerUrl, shopBannerUrl);
-
-        if (changed) {
-            // 🚀 Invalidate Glide cache by changing the signature
-            this.adVersion = String.valueOf(System.currentTimeMillis());
-            
-            Log.i(TAG, "Ad Catalog Sync: " + ads.size() + " -> " + newAds.size() + " ads. Version: " + adVersion);
-            
+    private void updateAdListLocal(List<AdModel> newAds) {
+        if (!newAds.equals(ads)) {
             this.ads.clear();
             this.ads.addAll(newAds);
-            this.rotationIntervalMs = newIntervalMs;
-
-            // 🚀 Preload all images with the NEW signature
+            this.adVersion = String.valueOf(System.currentTimeMillis());
+            
+            // Preload
             for (AdModel ad : ads) {
-                if ("image".equals(ad.type)) {
-                    Glide.with(context)
-                            .load(ad.url)
-                            .diskCacheStrategy(DiskCacheStrategy.ALL)
-                            .signature(new com.bumptech.glide.signature.ObjectKey(adVersion))
-                            .preload();
-                }
+                Glide.with(context)
+                        .load(ad.url)
+                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                        .signature(new com.bumptech.glide.signature.ObjectKey(adVersion))
+                        .preload();
             }
 
-            // 🚀 Notify listeners (AdActivity)
             for (OnAdUpdateListener listener : listeners) {
                 listener.onAdsUpdated(new ArrayList<>(ads), rotationIntervalMs, adVersion);
             }
         }
+    }
 
-        if (bannerChanged) {
-            this.shopBannerUrl = newBannerUrl;
-            for (OnAdUpdateListener listener : listeners) {
-                listener.onShopBannerUpdated(shopBannerUrl);
-            }
-        }
-
-        boolean brandingChanged = !Objects.equals(newDisplayName, shopDisplayName) || !Objects.equals(newBrandingType, shopBrandingType);
-        if (brandingChanged || bannerChanged) {
-            this.shopDisplayName = newDisplayName;
-            this.shopBrandingType = newBrandingType;
-            for (OnAdUpdateListener listener : listeners) {
-                listener.onBrandingUpdated(shopBrandingType, shopDisplayName, shopBannerUrl);
-            }
-        }
+    // Keeping these for legacy compatibility or future shop branding sync
+    private void startAdSync() {
+        // ... (can be removed if shop branding is moved to SyncManager)
     }
 
     private void addAdFromMap(Map<String, Object> adMap, List<AdModel> adList) {
         String videoUrl = (String) adMap.get("videoUrl");
         if (videoUrl != null && !videoUrl.isEmpty()) {
-            adList.add(new AdModel(videoUrl, "video"));
+            adList.add(new AdModel(videoUrl, "video", 15));
             return;
         }
         
         String imageUrl = (String) adMap.get("imageUrl");
         if (imageUrl != null && !imageUrl.isEmpty()) {
-            adList.add(new AdModel(imageUrl, "image"));
+            adList.add(new AdModel(imageUrl, "image", 15));
         }
     }
 
@@ -229,6 +152,18 @@ public final class AdManager {
 
     public void removeListener(OnAdUpdateListener listener) {
         listeners.remove(listener);
+    }
+
+    public void updateBranding(String type, String name, String url, long intervalMs) {
+        this.shopBrandingType = type != null ? type : "text";
+        this.shopDisplayName = name;
+        this.shopBannerUrl = url;
+        this.rotationIntervalMs = intervalMs > 0 ? intervalMs : 60000;
+
+        for (OnAdUpdateListener listener : listeners) {
+            listener.onBrandingUpdated(shopBrandingType, shopDisplayName, shopBannerUrl);
+            listener.onAdsUpdated(new ArrayList<>(ads), rotationIntervalMs, adVersion);
+        }
     }
 
     public List<AdModel> getAds() {

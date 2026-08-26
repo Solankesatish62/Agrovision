@@ -12,6 +12,8 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.SeekBar;
@@ -44,9 +46,12 @@ import com.agrovision.kiosk.threading.MatchingExecutor;
 import com.agrovision.kiosk.threading.RecognitionExecutor;
 import com.agrovision.kiosk.ui.ad.AdActivity;
 import com.agrovision.kiosk.ui.ad.AdManager;
+import com.agrovision.kiosk.ui.splash.SplashActivity;
 import com.agrovision.kiosk.ui.result.ResultActivity;
 import com.agrovision.kiosk.ui.result.UnknownActivity;
 import com.agrovision.kiosk.app.UpdateManager;
+import com.agrovision.kiosk.data.model.Medicine;
+import com.agrovision.kiosk.data.repository.MedicineRepository;
 import com.agrovision.kiosk.ui.result.model.ResultType;
 import com.agrovision.kiosk.ui.result.model.ScanResult;
 import com.agrovision.kiosk.util.AudioCacheManager;
@@ -91,6 +96,7 @@ public final class HomeActivity extends AppCompatActivity
     private View shopTextBranding;
     private android.widget.TextView tvShopName;
     private android.widget.ImageView ivShopBrandingPoster;
+    private AutoCompleteTextView etSearchMedicine;
 
     // 🚀 Permission Launcher
     private final ActivityResultLauncher<String> requestPermissionLauncher =
@@ -130,6 +136,10 @@ public final class HomeActivity extends AppCompatActivity
 
         bindViews();
         initDependencies();
+        
+        setupSearchListener();
+        setupSearchAutocomplete();
+
         // Camera starts in onResume
         displayCurrentScanCount();
 
@@ -157,6 +167,18 @@ public final class HomeActivity extends AppCompatActivity
     @Override
     protected void onResume() {
         super.onResume();
+
+        // 🚀 Security Lock: Ensure kiosk is still paired
+        SharedPreferences prefs = getSharedPreferences("kiosk_settings", MODE_PRIVATE);
+        if (!prefs.getBoolean("is_registered", false) || prefs.getString("shop_id", null) == null) {
+            LogUtils.w("Pairing lost or missing. Redirecting to splash.");
+            Intent intent = new Intent(this, SplashActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(intent);
+            finish();
+            return;
+        }
+
         PerformanceProfiler.log("Return Home", "HomeActivity Visible");
         Log.d("STATE_DEBUG", "HomeActivity resumed. Current state: " + stateMachine.getCurrentState());
         
@@ -203,8 +225,194 @@ public final class HomeActivity extends AppCompatActivity
         shopTextBranding = findViewById(R.id.shopTextBranding);
         tvShopName = findViewById(R.id.tvShopName);
         ivShopBrandingPoster = findViewById(R.id.ivShopBrandingPoster);
+        etSearchMedicine = findViewById(R.id.etSearchMedicine);
 
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
+    }
+
+    private void setupSearchAutocomplete() {
+        if (etSearchMedicine == null) return;
+        
+        // Listen for catalog updates to keep search list fresh
+        MedicineRepository.getInstance(this).addOnCatalogUpdateListener(newCatalog -> {
+            if (newCatalog == null) return;
+            runOnUiThread(() -> {
+                List<String> names = new ArrayList<>();
+                for (Medicine m : newCatalog) {
+                    names.add(m.getName());
+                }
+                
+                ArrayAdapter<String> adapter = new ArrayAdapter<>(this, 
+                        android.R.layout.simple_dropdown_item_1line, names);
+                etSearchMedicine.setAdapter(adapter);
+            });
+        });
+
+        // Initial populate
+        List<Medicine> initial = MedicineRepository.getInstance(this).getAll();
+        if (!initial.isEmpty()) {
+            List<String> names = new ArrayList<>();
+            for (Medicine m : initial) names.add(m.getName());
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(this, 
+                    android.R.layout.simple_dropdown_item_1line, names);
+            etSearchMedicine.setAdapter(adapter);
+        }
+        
+        etSearchMedicine.setOnItemClickListener((parent, view, position, id) -> {
+            String selected = (String) parent.getItemAtPosition(position);
+            handleManualSearch(selected);
+            etSearchMedicine.setText("");
+            hideKeyboard(etSearchMedicine);
+            etSearchMedicine.clearFocus();
+        });
+    }
+
+    private void setupSearchListener() {
+        if (etSearchMedicine == null) return;
+
+        etSearchMedicine.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH ||
+                (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN)) {
+                
+                String query = etSearchMedicine.getText().toString().trim();
+                if (!query.isEmpty()) {
+                    handleManualSearch(query);
+                    // Clear search and hide keyboard
+                    etSearchMedicine.setText("");
+                    hideKeyboard(v);
+                }
+                return true;
+            }
+            return false;
+        });
+    }
+
+    private void hideKeyboard(View view) {
+        InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        }
+    }
+
+    private void handleManualSearch(String query) {
+        synchronized (this) {
+            if (isScanLocked) return;
+            isScanLocked = true;
+        }
+
+        // 🚀 STOP CAMERA PROCESSING
+        cameraController.resetPipeline();
+
+        // 🚀 SHOW PROGRESS UI
+        runOnUiThread(() -> {
+            if (progressScanner != null) {
+                progressScanner.setVisibility(View.VISIBLE);
+            }
+        });
+
+        // 🚀 PERFORM SEARCH ON BACKGROUND THREAD
+        MatchingExecutor.submit(() -> {
+            Log.d("SEARCH_TRACE", "Manual search for: " + query);
+            
+            List<Medicine> all = MedicineRepository.getInstance(this).getAll();
+            Medicine bestMatch = null;
+            String lowerQuery = query.toLowerCase(Locale.ROOT).trim();
+            
+            // 1. Exact Name Match (Highest Priority)
+            for (Medicine m : all) {
+                if (m.getName().toLowerCase(Locale.ROOT).trim().equals(lowerQuery)) {
+                    bestMatch = m;
+                    break;
+                }
+            }
+
+            // 2. Exact Keyword Match
+            if (bestMatch == null) {
+                for (Medicine m : all) {
+                    if (m.getSearchKeywords() != null) {
+                        for (String kw : m.getSearchKeywords()) {
+                            if (kw.toLowerCase(Locale.ROOT).trim().equals(lowerQuery)) {
+                                bestMatch = m;
+                                break;
+                            }
+                        }
+                    }
+                    if (bestMatch != null) break;
+                }
+            }
+
+            // 3. Ambiguity Check (If no exact match found)
+            boolean isAmbiguous = false;
+            if (bestMatch == null) {
+                List<Medicine> possibleMatches = new ArrayList<>();
+                for (Medicine m : all) {
+                    String lowerName = m.getName().toLowerCase(Locale.ROOT);
+                    if (lowerName.contains(lowerQuery)) {
+                        possibleMatches.add(m);
+                    }
+                }
+
+                if (possibleMatches.size() == 1) {
+                    // Only one medicine matches this text, select it automatically
+                    bestMatch = possibleMatches.get(0);
+                } else if (possibleMatches.size() > 1) {
+                    // Multiple medicines match (e.g. "Bango" vs "Crystal Bango" & "Bango Plus")
+                    isAmbiguous = true;
+                }
+            }
+
+            final Medicine finalMatch = bestMatch;
+            final boolean finalAmbiguous = isAmbiguous;
+
+            runOnUiThread(() -> {
+                if (progressScanner != null) progressScanner.setVisibility(View.GONE);
+
+                if (finalAmbiguous) {
+                    // Multiple options found, don't open result screen automatically
+                    SoundManager.getInstance(HomeActivity.this).playError();
+                    Toast.makeText(HomeActivity.this, "एकापेक्षा जास्त औषधे सापडली, कृपया यादीतून निवडा (Multiple matches, please select one)", Toast.LENGTH_SHORT).show();
+                    etSearchMedicine.showDropDown();
+                    synchronized (HomeActivity.this) {
+                        isScanLocked = false;
+                    }
+                    return;
+                }
+
+                if (finalMatch != null) {
+                    // Found a single clear match, open it
+                    List<ScanResult> results = new ArrayList<>();
+                    results.add(new ScanResult(
+                        ResultType.KNOWN,
+                        finalMatch.getId(),
+                        finalMatch.getName(),
+                        finalMatch.getCompany(),
+                        finalMatch.getChemicalName(),
+                        finalMatch.getImageUrls(),
+                        finalMatch.getAudioUrls(),
+                        com.agrovision.kiosk.ui.result.mapper.ResultInfoMapper.fromMedicine(finalMatch),
+                        query,
+                        false
+                    ));
+                    
+                    lastScanTime = System.currentTimeMillis();
+                    cameraController.setDetectionEnabled(false);
+                    
+                    // Clear focus and hide keyboard
+                    etSearchMedicine.clearFocus();
+                    
+                    incrementScanCount(true);
+                    launchResultScreen(results);
+                } else {
+                    // No match found at all
+                    SoundManager.getInstance(HomeActivity.this).playError();
+                    Toast.makeText(HomeActivity.this, "माहिती सापडली नाही (Medicine Not Found)", Toast.LENGTH_SHORT).show();
+                    
+                    synchronized (HomeActivity.this) {
+                        isScanLocked = false;
+                    }
+                }
+            });
+        });
     }
 
     private void showSettingsDialog() {
@@ -286,28 +494,83 @@ public final class HomeActivity extends AppCompatActivity
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        // 🚀 If search bar is focused, let it handle the keys
+        if (etSearchMedicine != null && etSearchMedicine.hasFocus()) {
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+                etSearchMedicine.clearFocus();
+                hideKeyboard(etSearchMedicine);
+                return true;
+            }
+            return super.dispatchKeyEvent(event);
+        }
+
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             long now = System.currentTimeMillis();
-            
-            // If it's been too long since the last key, it's probably a human, reset buffer
-            if (now - lastKeyTime > SCANNER_THRESHOLD_MS && barcodeBuffer.length() > 0) {
-                barcodeBuffer.setLength(0);
-            }
+            long delta = now - lastKeyTime;
             lastKeyTime = now;
 
-            if (event.getKeyCode() == KeyEvent.KEYCODE_ENTER) {
-                String result = barcodeBuffer.toString().trim();
-                if (!result.isEmpty()) {
-                    LogUtils.i("Barcode Gun Scan detected: " + result);
-                    handleBarcodeScan(result);
-                }
-                barcodeBuffer.setLength(0);
-                return true; // Handled
+            int keyCode = event.getKeyCode();
+
+            // 🚀 Handle 'Shift + A' key for manual advertisement trigger
+            if (keyCode == KeyEvent.KEYCODE_A && event.isShiftPressed()) {
+                LogUtils.i("Manual Ad trigger requested via keyboard shortcut 'Shift+A'");
+                launchAdScreen();
+                return true;
             }
 
+            // 🚀 Support keyboard arrows to view previous results from Home
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+                    keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                
+                // Only open if we actually have history to show
+                SharedPreferences prefs = getSharedPreferences("kiosk_settings", MODE_PRIVATE);
+                // Note: HISTORY is static in ResultActivity, so we can't easily check it here without a public method or shared prefs.
+                // But ResultActivity.loadResults() will handle empty case.
+                
+                LogUtils.i("Arrow key pressed on Home - opening history");
+                Intent intent = new Intent(this, ResultActivity.class);
+                startActivity(intent);
+                overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+                return true;
+            }
+
+            // 🚀 Handle ENTER key
+            if (keyCode == KeyEvent.KEYCODE_ENTER) {
+                String result = barcodeBuffer.toString().trim();
+                barcodeBuffer.setLength(0);
+                if (!result.isEmpty()) {
+                    if (delta < SCANNER_THRESHOLD_MS) {
+                        handleBarcodeScan(result);
+                    } else {
+                        handleManualSearch(result);
+                    }
+                }
+                return true;
+            }
+
+            // 🚀 Handle printable characters
             char c = (char) event.getUnicodeChar();
-            if (c > 31 && c < 127) { // Printable characters
+            if (c > 31 && c < 127) {
+                // If it's a human typing (not a burst from scanner)
+                if (delta > SCANNER_THRESHOLD_MS) {
+                    etSearchMedicine.requestFocus();
+                    etSearchMedicine.setText(String.valueOf(c));
+                    etSearchMedicine.setSelection(1);
+                    
+                    // Force dropdown to show after focus
+                    etSearchMedicine.postDelayed(() -> {
+                        if (etSearchMedicine.hasFocus()) {
+                            etSearchMedicine.showDropDown();
+                        }
+                    }, 100);
+
+                    // Clear anything the barcode buffer might have caught erroneously
+                    barcodeBuffer.setLength(0);
+                    return true;
+                }
+                
                 barcodeBuffer.append(c);
+                return true;
             }
         }
         return super.dispatchKeyEvent(event);
@@ -504,12 +767,23 @@ public final class HomeActivity extends AppCompatActivity
     public void onStateChanged(AppState state) {
         LogUtils.i("HomeActivity observed state: " + state);
         
+        if (state == AppState.IDLE_AD || state == AppState.SCAN_AD) {
+            launchAdScreen();
+        }
+
         // If we just finished an ad, make sure we are in READY state and resume scanning
         if (state == AppState.READY) {
             synchronized (this) {
                 isScanLocked = false;
             }
+            cameraController.setDetectionEnabled(true);
         }
+    }
+
+    private void launchAdScreen() {
+        Intent intent = new Intent(this, AdActivity.class);
+        intent.putExtra(AdActivity.EXTRA_AD_TYPE, AdActivity.AdType.SLIDESHOW);
+        startActivity(intent);
     }
 
     /* =========================================================
@@ -601,8 +875,8 @@ public final class HomeActivity extends AppCompatActivity
     }
 
     private void syncScanCountToFirebase(String today) {
-        String shopId = getSharedPreferences("kiosk_settings", MODE_PRIVATE)
-                .getString("shop_mobile", "910000000000");
+        SharedPreferences prefs = getSharedPreferences("kiosk_settings", MODE_PRIVATE);
+        String shopId = prefs.getString("shop_id", prefs.getString("shop_mobile", "910000000000"));
 
         // Use top-level collection for easier dashboard aggregation
         String docId = shopId + "_" + today;

@@ -47,7 +47,7 @@ public final class RecognitionPipelineOrchestrator {
         this.repository = MedicineRepository.getInstance(context);
         this.medicineCatalog = repository.getAll();
         
-        this.repository.setOnCatalogUpdateListener(newCatalog -> {
+        this.repository.addOnCatalogUpdateListener(newCatalog -> {
             Log.i(TAG, "Catalog updated. New size: " + newCatalog.size());
             this.medicineCatalog = newCatalog;
         });
@@ -115,6 +115,8 @@ public final class RecognitionPipelineOrchestrator {
                 ResultType.KNOWN,
                 m.getId(),
                 m.getName(),
+                m.getCompany(),
+                m.getChemicalName(),
                 m.getImageUrls(),
                 m.getAudioUrls(),
                 infoItems,
@@ -158,6 +160,8 @@ public final class RecognitionPipelineOrchestrator {
                         ResultType.KNOWN,
                         medicine.getId(),
                         medicine.getName(),
+                        medicine.getCompany(),
+                        medicine.getChemicalName(),
                         medicine.getImageUrls(),
                         medicine.getAudioUrls(),
                         infoItems,
@@ -170,6 +174,8 @@ public final class RecognitionPipelineOrchestrator {
                         ResultType.UNKNOWN,
                         null,
                         "Unknown Medicine",
+                        null,
+                        null,
                         Collections.emptyList(),
                         Collections.emptyList(),
                         Collections.emptyList(),

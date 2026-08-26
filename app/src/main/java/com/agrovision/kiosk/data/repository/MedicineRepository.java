@@ -36,7 +36,7 @@ public final class MedicineRepository {
     private final FirebaseFirestore firestore;
     
     private volatile List<Medicine> cachedCatalog = new ArrayList<>();
-    private OnCatalogUpdateListener updateListener;
+    private final List<OnCatalogUpdateListener> updateListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public interface OnCatalogUpdateListener {
         void onCatalogUpdated(List<Medicine> newCatalog);
@@ -76,8 +76,20 @@ public final class MedicineRepository {
         startRealtimeSync();
     }
 
-    public void setOnCatalogUpdateListener(OnCatalogUpdateListener listener) {
-        this.updateListener = listener;
+    public void addOnCatalogUpdateListener(OnCatalogUpdateListener listener) {
+        if (listener != null && !updateListeners.contains(listener)) {
+            updateListeners.add(listener);
+        }
+    }
+
+    public void removeOnCatalogUpdateListener(OnCatalogUpdateListener listener) {
+        updateListeners.remove(listener);
+    }
+
+    private void notifyListeners(List<Medicine> newCatalog) {
+        for (OnCatalogUpdateListener listener : updateListeners) {
+            listener.onCatalogUpdated(newCatalog);
+        }
     }
 
     private void loadCatalogFromRoom() {
@@ -87,8 +99,8 @@ public final class MedicineRepository {
                 updateCacheFromEntities(entities);
                 Log.i(TAG, "Database: Initialized. Loaded " + cachedCatalog.size() + " total items from Room.");
 
-                if (updateListener != null) {
-                    updateListener.onCatalogUpdated(cachedCatalog);
+                if (updateListeners != null) {
+                    notifyListeners(cachedCatalog);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Database: Failed to load from Room.", e);
@@ -178,8 +190,8 @@ public final class MedicineRepository {
 
                 Log.i(TAG, "Database: Sync complete for " + sourceName + ". Final searchable items: " + cachedCatalog.size());
 
-                if (updateListener != null) {
-                    updateListener.onCatalogUpdated(cachedCatalog);
+                if (updateListeners != null) {
+                    notifyListeners(cachedCatalog);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Database: Sync operation failed.", e);

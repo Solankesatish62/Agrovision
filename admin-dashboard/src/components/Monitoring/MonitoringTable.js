@@ -6,7 +6,8 @@ const MonitoringTable = ({ kiosks, scans, formatTimestamp }) => (
   <TableLayout headers={['Device', 'Retail Partner', 'Daily Usage', 'Last Heartbeat', 'Version', 'Status']}>
     {kiosks.map(k => {
       const lastActiveMillis = formatTimestamp(k.lastActiveTimestamp);
-      const isOnline = lastActiveMillis > 0 && (Date.now() - lastActiveMillis) < 90 * 1000 && k.status === 'ONLINE';
+      // Online if heartbeat within 25 minutes (Heartbeat is 15min + jitter)
+      const isOnline = lastActiveMillis > 0 && (Date.now() - lastActiveMillis) < 25 * 60 * 1000;
 
       return (
         <tr key={k.id} style={trStyle}>
@@ -16,7 +17,7 @@ const MonitoringTable = ({ kiosks, scans, formatTimestamp }) => (
           <td style={tdBoldStyle}>{k.shopName}</td>
           <td style={tdStyle}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontWeight: '700', color: COLORS.secondary }}>{scans[k.id] || 0}</span>
+                <span style={{ fontWeight: '700', color: COLORS.secondary }}>{scans[k.shopId] || scans[k.id] || 0}</span>
                 <span style={{ fontSize: '11px', color: COLORS.textMuted }}>scans</span>
             </div>
           </td>

@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.VideoView;
@@ -96,7 +97,10 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
 
         StateMachine.getInstance(this).addObserver(this);
         AdManager.getInstance(this).addListener(this);
-        CameraController.getInstance(this).setDetectionEnabled(false);
+        
+        // 🚀 KEEP SCANNING in the background during advertisements
+        CameraController.getInstance(this).startSilentAnalysis(this);
+        CameraController.getInstance(this).setDetectionEnabled(true);
         
         findViewById(R.id.tvAdBadge).setOnClickListener(v -> finish()); // Allow closing slideshow
 
@@ -105,6 +109,32 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
 
         // 🚀 Load catalog from shared AdManager
         loadFromAdManager();
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            int keyCode = event.getKeyCode();
+            // 🚀 Listen for HOME, ESCAPE, or BACK key on physical keyboard to return to scan
+            if (keyCode == KeyEvent.KEYCODE_MOVE_HOME || keyCode == KeyEvent.KEYCODE_ESCAPE || 
+                keyCode == KeyEvent.KEYCODE_HOME || keyCode == KeyEvent.KEYCODE_BACK) {
+                finish();
+                return true;
+            }
+            
+            // 🚀 Handle Arrow keys for manual navigation
+            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                LogUtils.i("Manual jump to Next Ad requested via keyboard [DPAD_RIGHT]");
+                moveToNextAd();
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                LogUtils.i("Manual jump to Previous Ad requested via keyboard [DPAD_LEFT]");
+                moveToPrevAd();
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     @Override
@@ -219,7 +249,7 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
     private void showImageAd(AdManager.AdModel ad) {
         vvAd.setVisibility(View.GONE);
         ivAd.setVisibility(View.VISIBLE);
-        ivAd.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        ivAd.setScaleType(ImageView.ScaleType.FIT_CENTER);
 
         Glide.with(this)
                 .load(ad.url)
@@ -239,8 +269,10 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
                         Log.i(TAG, "Ad image ready: " + ad.url);
                         recordAdImpression(ad.url);
                         
-                        // 🚀 Rotation timer for images (1 minute or as configured)
-                        rotationHandler.postDelayed(() -> moveToNextAd(), rotationIntervalMs);
+                        // 🚀 Rotation timer for images
+                        // Use ad-specific duration (converted to ms) if available, otherwise fallback to global or default
+                        long durationMs = (ad.duration > 0) ? ad.duration * 1000L : rotationIntervalMs;
+                        rotationHandler.postDelayed(() -> moveToNextAd(), durationMs);
                         return false;
                     }
                 })
@@ -335,7 +367,12 @@ public final class AdActivity extends AppCompatActivity implements StateObserver
 
     @Override
     public void onStateChanged(AppState state) {
-        // No-op: Slideshow remains visible until manually closed by shopkeeper
+        LogUtils.d("AdActivity.onStateChanged: " + state);
+        // 🚀 STOP advertisement if activity is detected (Scanning started or user touched screen)
+        if (state == AppState.READY || state == AppState.SCANNING) {
+            Log.i(TAG, "Activity detected. Closing advertisement slideshow.");
+            finish();
+        }
     }
 
     private void hideSystemUI() {

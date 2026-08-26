@@ -59,7 +59,7 @@ public interface MedicineDao {
      * - Debug reset
      */
     @Query("DELETE FROM medicines")
-    void clearAll();
+    void deleteAll();
 
     /**
      * Delete medicines by ID.

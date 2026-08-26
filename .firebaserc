@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "agrovision-bbafb"
-  }
+  },
+  "targets": {
+    "agrovision-bbafb": {
+      "hosting": {
+        "admin": [
+          "agrovision-bbafb"
+        ],
+        "shopkeeper": [
+          "agrovision-shopkeeper"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

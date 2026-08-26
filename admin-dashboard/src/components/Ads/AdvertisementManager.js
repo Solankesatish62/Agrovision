@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../../firebase';
-import { collection, doc, onSnapshot, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, query, where, collectionGroup } from 'firebase/firestore';
 import { trStyle, tdStyle, tdBoldStyle, badgeStyle, exportBtnStyle, labelStyle, inputStyle, COLORS } from '../Shared/Styles';
 import TableLayout from '../Shared/TableLayout';
 
@@ -8,6 +8,7 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
     const [selectedShopId, setSelectedShopId] = useState('');
     const [shopSearchTerm, setShopSearchTerm] = useState('');
     const [adsData, setAdsData] = useState({ ads: [], interval_seconds: 60 });
+    const [portalAds, setPortalAds] = useState([]);
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingAd, setEditingAd] = useState(null);
     const [isSaving, setIsSaving] = useState(false);
@@ -16,6 +17,7 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
         title: '',
         imageUrl: '',
         videoUrl: '',
+        duration: 15,
         active: true,
         type: 'image'
     });
@@ -24,18 +26,69 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
     const [shopsWithAds, setShopsWithAds] = useState({});
 
     useEffect(() => {
-        // Listen to the entire kiosk_ads collection for status badges in the list
-        const unsubscribe = onSnapshot(collection(db, 'kiosk_ads'), (snapshot) => {
-            const statusMap = {};
+        // Listen to the entire kiosk_ads collection (Legacy Admin Ads)
+        const unsubAdmin = onSnapshot(collection(db, 'kiosk_ads'), (snapshot) => {
+            const adminStatusMap = {};
             snapshot.docs.forEach(doc => {
                 const data = doc.data();
-                const adsCount = Array.isArray(data.ads) ? data.ads.length : 0;
-                const activeCount = Array.isArray(data.ads) ? data.ads.filter(a => a.active).length : 0;
-                statusMap[doc.id] = { total: adsCount, active: activeCount };
+                const adsCount = (Array.isArray(data.ads) ? data.ads.length : 0) + (Array.isArray(data.ad_list) ? data.ad_list.length : 0);
+                const activeCount = (Array.isArray(data.ads) ? data.ads.filter(a => a.active).length : 0) + (Array.isArray(data.ad_list) ? data.ad_list.length : 0);
+                adminStatusMap[doc.id] = { total: adsCount, active: activeCount };
             });
-            setShopsWithAds(statusMap);
+
+            setShopsWithAds(prev => {
+                const newMap = { ...prev };
+                Object.keys(adminStatusMap).forEach(id => {
+                    newMap[id] = {
+                        total: adminStatusMap[id].total + (newMap[id]?.portalTotal || 0),
+                        active: adminStatusMap[id].active + (newMap[id]?.portalActive || 0),
+                        adminTotal: adminStatusMap[id].total,
+                        adminActive: adminStatusMap[id].active,
+                        portalTotal: newMap[id]?.portalTotal || 0,
+                        portalActive: newMap[id]?.portalActive || 0
+                    };
+                });
+                return newMap;
+            });
         });
-        return () => unsubscribe();
+
+        // Listen to all advertisements subcollections (Unified Portal Ads)
+        const unsubPortal = onSnapshot(collectionGroup(db, 'advertisements'), (snapshot) => {
+            const portalStatusMap = {};
+            snapshot.docs.forEach(doc => {
+                const shopId = doc.ref.parent.parent?.id;
+                if (!shopId) return;
+
+                const data = doc.data();
+                if (data.deleted) return;
+
+                if (!portalStatusMap[shopId]) portalStatusMap[shopId] = { total: 0, active: 0 };
+                portalStatusMap[shopId].total++;
+                if (data.enabled !== false) portalStatusMap[shopId].active++;
+            });
+
+            setShopsWithAds(prev => {
+                const newMap = { ...prev };
+                // Reset portal counts for shops that might have had ads deleted
+                Object.keys(newMap).forEach(id => {
+                    newMap[id] = { ...newMap[id], portalTotal: 0, portalActive: 0 };
+                });
+
+                Object.keys(portalStatusMap).forEach(id => {
+                    newMap[id] = {
+                        total: (newMap[id]?.adminTotal || 0) + portalStatusMap[id].total,
+                        active: (newMap[id]?.adminActive || 0) + portalStatusMap[id].active,
+                        adminTotal: newMap[id]?.adminTotal || 0,
+                        adminActive: newMap[id]?.adminActive || 0,
+                        portalTotal: portalStatusMap[id].total,
+                        portalActive: portalStatusMap[id].active
+                    };
+                });
+                return newMap;
+            });
+        });
+
+        return () => { unsubAdmin(); unsubPortal(); };
     }, []);
 
     const filteredShops = useMemo(() => {
@@ -58,45 +111,40 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
 
     useEffect(() => {
         if (!selectedShopId) {
-            setAdsData({ ads: [], interval_seconds: 60, shopBannerUrl: '', shopDisplayName: '', shopBrandingType: 'text' });
+            setAdsData({ ads: [], interval_seconds: 60 });
+            setPortalAds([]);
             return;
         }
 
-        const unsubscribe = onSnapshot(doc(db, 'kiosk_ads', selectedShopId), (docSnap) => {
+        // 1. Listen to Admin-Published Ads (Legacy collection)
+        const unsubAdmin = onSnapshot(doc(db, 'kiosk_ads', selectedShopId), (docSnap) => {
             if (docSnap.exists()) {
                 const data = docSnap.data();
                 let adsList = [];
                 if (Array.isArray(data.ads)) {
                     adsList = data.ads;
-                } else if (typeof data.ads === 'object' && data.ads !== null) {
-                    adsList = Object.values(data.ads);
                 } else if (Array.isArray(data.ad_list)) {
+                    // Restore compatibility for legacy 'ad_list' field
                     adsList = data.ad_list.map(url => ({ imageUrl: url, active: true, title: 'Legacy Ad' }));
                 }
+
                 setAdsData({
                     ads: adsList,
-                    interval_seconds: data.interval_seconds || 60,
-                    shopBannerUrl: data.shopBannerUrl || '',
-                    shopDisplayName: data.shopDisplayName || '',
-                    shopBrandingType: data.shopBrandingType || 'text'
+                    interval_seconds: data.interval_seconds || 60
                 });
             } else {
-                setAdsData({ ads: [], interval_seconds: 60, shopBannerUrl: '', shopDisplayName: '', shopBrandingType: 'text' });
+                setAdsData({ ads: [], interval_seconds: 60 });
             }
         });
 
-        return () => unsubscribe();
-    }, [selectedShopId]);
+        // 2. Listen to Portal-Published Ads (Unified collection)
+        const unsubPortal = onSnapshot(query(collection(db, `shops/${selectedShopId}/advertisements`), where('deleted', '==', false)), (snapshot) => {
+            const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            setPortalAds(data);
+        });
 
-    const handleUpdateField = async (field, value) => {
-        if (!selectedShopId) return;
-        try {
-            const docRef = doc(db, 'kiosk_ads', selectedShopId);
-            await setDoc(docRef, { [field]: value }, { merge: true });
-        } catch (error) {
-            console.error(`Error updating ${field}:`, error);
-        }
-    };
+        return () => { unsubAdmin(); unsubPortal(); };
+    }, [selectedShopId]);
 
     const handleSaveAd = async (e) => {
         e.preventDefault();
@@ -104,32 +152,62 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
         setIsSaving(true);
 
         try {
-            const docRef = doc(db, 'kiosk_ads', selectedShopId);
-            let updatedAds = [...adsData.ads];
-
             const adToSave = {
-                title: formData.title || (formData.type === 'video' ? 'Video Ad' : 'Image Ad'),
-                active: formData.active,
-                imageUrl: formData.type === 'image' ? formData.imageUrl : '',
-                videoUrl: formData.type === 'video' ? formData.videoUrl : '',
-                updatedAt: new Date().toISOString()
+                name: formData.title || (formData.type === 'video' ? 'Video Ad' : 'Image Ad'),
+                enabled: formData.active,
+                type: formData.type,
+                imageUrl: formData.type === 'image' ? (formData.imageUrl || '') : '',
+                videoUrl: formData.type === 'video' ? (formData.videoUrl || '') : '',
+                duration: parseInt(formData.duration || 15),
+                advertiserName: 'Admin',
+                startAt: serverTimestamp(),
+                deleted: false,
+                updatedAt: serverTimestamp(),
+                createdAt: serverTimestamp(),
+                createdBy: 'admin'
             };
 
-            if (editingAd !== null) {
-                updatedAds[editingAd] = adToSave;
+            // Calculate endAt (365 days from now)
+            const endDate = new Date();
+            endDate.setFullYear(endDate.getFullYear() + 1);
+            adToSave.endAt = endDate;
+
+            if (editingAd && editingAd.id) {
+                // Update Portal Ad
+                await updateDoc(doc(db, `shops/${selectedShopId}/advertisements`, editingAd.id), adToSave);
+            } else if (editingAd) {
+                // Handle editing a legacy admin ad by converting it to a portal ad or updating legacy collection
+                // For now, let's keep it simple: update legacy collection if it's a legacy ad
+                const docRef = doc(db, 'kiosk_ads', selectedShopId);
+                const updatedAds = [...adsData.ads];
+                const idx = updatedAds.findIndex(a => a.imageUrl === editingAd.imageUrl || a.videoUrl === editingAd.videoUrl);
+
+                const legacyAd = {
+                    title: adToSave.name,
+                    active: adToSave.enabled,
+                    imageUrl: adToSave.imageUrl,
+                    videoUrl: adToSave.videoUrl,
+                    duration: adToSave.duration,
+                    updatedAt: new Date().toISOString()
+                };
+
+                if (idx !== -1) {
+                    updatedAds[idx] = legacyAd;
+                }
+                await setDoc(docRef, { ads: updatedAds }, { merge: true });
             } else {
-                updatedAds.push(adToSave);
+                // Create New Portal Ad (Unified)
+                const adRef = doc(collection(db, `shops/${selectedShopId}/advertisements`));
+                adToSave.adId = adRef.id;
+                await setDoc(adRef, adToSave);
             }
 
-            await setDoc(docRef, {
-                ads: updatedAds,
-                interval_seconds: adsData.interval_seconds,
-                lastUpdated: serverTimestamp()
-            }, { merge: true });
+            // Trigger Kiosk Sync
+            await updateDoc(doc(db, 'shops', selectedShopId), { configVersion: serverTimestamp() });
 
             setIsFormOpen(false);
             setEditingAd(null);
-            setFormData({ title: '', imageUrl: '', videoUrl: '', active: true, type: 'image' });
+            setFormData({ title: '', imageUrl: '', videoUrl: '', duration: 15, active: true, type: 'image' });
         } catch (error) {
             console.error("Error saving ad:", error);
             alert("Failed to save advertisement.");
@@ -137,24 +215,37 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
         setIsSaving(false);
     };
 
-    const handleDeleteAd = async (index) => {
+    const handleDeleteAd = async (ad) => {
         if (!window.confirm("Are you sure you want to delete this advertisement?")) return;
         try {
-            const docRef = doc(db, 'kiosk_ads', selectedShopId);
-            const updatedAds = adsData.ads.filter((_, i) => i !== index);
-            await updateDoc(docRef, { ads: updatedAds });
+            if (ad.id) {
+                // Delete Portal Ad (Hard Delete)
+                await deleteDoc(doc(db, `shops/${selectedShopId}/advertisements`, ad.id));
+            } else {
+                // Delete Legacy Admin Ad
+                const docRef = doc(db, 'kiosk_ads', selectedShopId);
+                const updatedAds = adsData.ads.filter((a) => a.imageUrl !== ad.imageUrl);
+                await updateDoc(docRef, { ads: updatedAds });
+            }
+            // Trigger Kiosk Sync
+            await updateDoc(doc(db, 'shops', selectedShopId), { configVersion: serverTimestamp() });
         } catch (error) {
             console.error("Error deleting ad:", error);
             alert("Failed to delete advertisement.");
         }
     };
 
-    const handleToggleActive = async (index) => {
+    const handleToggleActive = async (ad) => {
         try {
-            const docRef = doc(db, 'kiosk_ads', selectedShopId);
-            const updatedAds = [...adsData.ads];
-            updatedAds[index].active = !updatedAds[index].active;
-            await updateDoc(docRef, { ads: updatedAds });
+            if (ad.id) {
+                await updateDoc(doc(db, `shops/${selectedShopId}/advertisements`, ad.id), { enabled: !ad.enabled });
+            } else {
+                const docRef = doc(db, 'kiosk_ads', selectedShopId);
+                const updatedAds = [...adsData.ads];
+                const idx = updatedAds.findIndex(a => a.imageUrl === ad.imageUrl);
+                updatedAds[idx].active = !updatedAds[idx].active;
+                await updateDoc(docRef, { ads: updatedAds });
+            }
         } catch (error) {
             console.error("Error toggling ad status:", error);
         }
@@ -170,13 +261,14 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
         }
     };
 
-    const openEditForm = (ad, index) => {
-        setEditingAd(index);
+    const openEditForm = (ad) => {
+        setEditingAd(ad);
         setFormData({
-            title: ad.title || '',
+            title: ad.name || ad.title || '',
             imageUrl: ad.imageUrl || '',
             videoUrl: ad.videoUrl || '',
-            active: ad.active !== false,
+            duration: ad.duration || 15,
+            active: ad.id ? (ad.enabled !== false) : (ad.active !== false),
             type: ad.videoUrl ? 'video' : 'image'
         });
         setIsFormOpen(true);
@@ -301,9 +393,9 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
                                 <p style={{ margin: '5px 0 0 0', color: '#64748b', fontSize: '14px' }}>Managing advertisements for {selectedShop?.ownerName}.</p>
                             </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                             <button
-                                onClick={() => { setEditingAd(null); setFormData({ title: '', imageUrl: '', videoUrl: '', active: true, type: 'image' }); setIsFormOpen(true); }}
+                                onClick={() => { setEditingAd(null); setFormData({ title: '', imageUrl: '', videoUrl: '', duration: 15, active: true, type: 'image' }); setIsFormOpen(true); }}
                                 style={{ ...exportBtnStyle, backgroundColor: COLORS.primary, borderRadius: '10px', padding: '12px 25px' }}
                             >
                                 + Add Advertisement
@@ -318,7 +410,7 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
                             <p style={{ margin: '2px 0 0 0', fontSize: '14px', color: '#64748b' }}>{selectedShop?.id}</p>
                         </div>
                         <div style={{ width: '200px' }}>
-                            <label style={labelStyle}>Slideshow Interval (sec)</label>
+                            <label style={labelStyle}>Global Ad Interval (sec)</label>
                             <input
                                 type="number"
                                 value={adsData.interval_seconds}
@@ -330,144 +422,75 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
                         </div>
                     </div>
 
-                    <div style={{ marginBottom: '30px', backgroundColor: '#fff7ed', padding: '24px', borderRadius: '16px', border: '1px solid #ffedd5' }}>
-                        <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', color: '#9a3412', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <span>🏪 Shop Identity & Co-Branding</span>
-                            <span style={{ fontSize: '12px', fontWeight: 'normal', backgroundColor: '#ffedd5', padding: '2px 8px', borderRadius: '10px' }}>Top Header</span>
-                        </h3>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
-                            <div>
-                                <label style={labelStyle}>Branding Type</label>
-                                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-                                    <button
-                                        onClick={() => handleUpdateField('shopBrandingType', 'text')}
-                                        style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: adsData.shopBrandingType === 'text' ? '#9a3412' : 'white', color: adsData.shopBrandingType === 'text' ? 'white' : '#64748b', fontWeight: 'bold', cursor: 'pointer' }}
-                                    >
-                                        Text Style
-                                    </button>
-                                    <button
-                                        onClick={() => handleUpdateField('shopBrandingType', 'poster')}
-                                        style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: adsData.shopBrandingType === 'poster' ? '#9a3412' : 'white', color: adsData.shopBrandingType === 'poster' ? 'white' : '#64748b', fontWeight: 'bold', cursor: 'pointer' }}
-                                    >
-                                        Poster/Logo
-                                    </button>
-                                </div>
-
-                                {adsData.shopBrandingType === 'text' ? (
-                                    <>
-                                        <label style={labelStyle}>Shop Display Name</label>
-                                        <input
-                                            type="text"
-                                            value={adsData.shopDisplayName}
-                                            onChange={(e) => handleUpdateField('shopDisplayName', e.target.value)}
-                                            style={inputStyle}
-                                            placeholder="e.g. Krishi Seva Kendra"
-                                        />
-                                    </>
-                                ) : (
-                                    <>
-                                        <label style={labelStyle}>Brand Logo / Poster URL</label>
-                                        <input
-                                            type="text"
-                                            value={adsData.shopBannerUrl}
-                                            onChange={(e) => handleUpdateField('shopBannerUrl', e.target.value)}
-                                            style={inputStyle}
-                                            placeholder="https://...logo.png"
-                                        />
-                                    </>
-                                )}
-                            </div>
-
-                            <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '20px', border: '1px solid #fed7aa', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                                <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: '#9a3412', fontWeight: 'bold', textAlign: 'center' }}>LIVE PREVIEW (HEADER)</p>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '15px', padding: '10px', border: '1px dashed #fdba74', borderRadius: '8px', minHeight: '60px' }}>
-                                    <span style={{ fontSize: '20px', fontWeight: 'bold' }}>
-                                        <span style={{ color: '#006400' }}>Agro</span>
-                                        <span style={{ color: '#FF8C00' }}>Vision</span>
-                                    </span>
-                                    <div style={{ width: '1px', height: '24px', backgroundColor: '#e2e8f0' }}></div>
-                                    {adsData.shopBrandingType === 'text' ? (
-                                        <span style={{ fontSize: '20px', fontWeight: 'bold' }}>
-                                            {(() => {
-                                                const name = adsData.shopDisplayName || 'Shop Name';
-                                                const spaceIndex = name.indexOf(' ');
-                                                if (spaceIndex > 0) {
-                                                    return (
-                                                        <>
-                                                            <span style={{ color: '#006400' }}>{name.substring(0, spaceIndex)}</span>
-                                                            <span style={{ color: '#FF8C00' }}>{name.substring(spaceIndex)}</span>
-                                                        </>
-                                                    );
-                                                }
-                                                return <span style={{ color: '#006400' }}>{name}</span>;
-                                            })()}
-                                        </span>
-                                    ) : (
-                                        adsData.shopBannerUrl ? <img src={adsData.shopBannerUrl} alt="Logo" style={{ height: '30px', objectFit: 'contain' }} /> : <span style={{ color: '#cbd5e1', fontSize: '14px' }}>No Logo URL</span>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     <div style={{ overflowX: 'auto', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
-                        <TableLayout headers={['#', 'Preview', 'Title / Info', 'Type', 'Status', 'Actions']}>
-                            {adsData.ads.map((ad, index) => (
-                                <tr key={index} style={trStyle}>
-                                    <td style={{ ...tdStyle, width: '40px' }}>{index + 1}</td>
-                                    <td style={{ ...tdStyle, width: '120px' }}>
-                                        {ad.videoUrl ? (
-                                            <div style={{ width: '100px', height: '60px', backgroundColor: '#000', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '20px' }}>🎥</div>
-                                        ) : (
-                                            <img src={ad.imageUrl} alt="" style={{ width: '100px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #e2e8f0' }} onError={(e) => e.target.src = 'https://via.placeholder.com/100x60?text=Error'} />
-                                        )}
-                                    </td>
-                                    <td style={tdBoldStyle}>
-                                        <div style={{ color: '#0f172a' }}>{ad.title || 'Untitled Ad'}</div>
-                                        <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 'normal', marginTop: '4px', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            URL: {ad.videoUrl || ad.imageUrl}
-                                        </div>
-                                    </td>
-                                    <td style={tdStyle}>
-                                        <span style={{ ...badgeStyle, backgroundColor: ad.videoUrl ? '#eff6ff' : '#f5f3ff', color: ad.videoUrl ? '#1d4ed8' : '#6d28d9' }}>
-                                            {ad.videoUrl ? 'VIDEO' : 'IMAGE'}
-                                        </span>
-                                    </td>
-                                    <td style={tdStyle}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }} onClick={() => handleToggleActive(index)}>
-                                            <div style={{
-                                                width: '36px',
-                                                height: '20px',
-                                                borderRadius: '10px',
-                                                backgroundColor: ad.active ? '#10b981' : '#cbd5e1',
-                                                position: 'relative',
-                                                transition: 'all 0.2s'
-                                            }}>
-                                                <div style={{
-                                                    width: '14px',
-                                                    height: '14px',
-                                                    borderRadius: '50%',
-                                                    backgroundColor: 'white',
-                                                    position: 'absolute',
-                                                    top: '3px',
-                                                    left: ad.active ? '19px' : '3px',
-                                                    transition: 'all 0.2s'
-                                                }} />
+                        <TableLayout headers={['#', 'Preview', 'Title / Info', 'Type / Duration', 'Source', 'Status', 'Actions']}>
+                            {[...adsData.ads, ...portalAds].map((ad, index) => {
+                                const isUnified = !!ad.id;
+                                const isAdminSource = !isUnified || ad.createdBy === 'admin';
+                                return (
+                                    <tr key={index} style={trStyle}>
+                                        <td style={{ ...tdStyle, width: '40px' }}>{index + 1}</td>
+                                        <td style={{ ...tdStyle, width: '120px' }}>
+                                            {ad.videoUrl ? (
+                                                <div style={{ width: '100px', height: '60px', backgroundColor: '#000', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '20px' }}>🎥</div>
+                                            ) : (
+                                                <img src={ad.imageUrl} alt="" style={{ width: '100px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #e2e8f0' }} onError={(e) => e.target.src = 'https://via.placeholder.com/100x60?text=Error'} />
+                                            )}
+                                        </td>
+                                        <td style={tdBoldStyle}>
+                                            <div style={{ color: '#0f172a' }}>{ad.title || ad.name || 'Untitled Ad'}</div>
+                                            <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 'normal', marginTop: '4px', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                URL: {ad.videoUrl || ad.imageUrl}
                                             </div>
-                                            <span style={{ fontSize: '13px', color: ad.active ? '#10b981' : '#64748b', fontWeight: '600' }}>
-                                                {ad.active ? 'Active' : 'Paused'}
+                                        </td>
+                                        <td style={tdStyle}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                <span style={{ ...badgeStyle, backgroundColor: ad.videoUrl ? '#eff6ff' : '#f5f3ff', color: ad.videoUrl ? '#1d4ed8' : '#6d28d9' }}>
+                                                    {ad.videoUrl ? 'VIDEO' : 'IMAGE'}
+                                                </span>
+                                                <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 'bold' }}>{ad.duration || 15}s</span>
+                                            </div>
+                                        </td>
+                                        <td style={tdStyle}>
+                                            <span style={{ ...badgeStyle, backgroundColor: isAdminSource ? '#f0fdfa' : '#fdf2f8', color: isAdminSource ? '#0f766e' : '#be185d' }}>
+                                                {isAdminSource ? 'ADMIN' : 'SHOPKEEPER'}
                                             </span>
-                                        </div>
-                                    </td>
-                                    <td style={tdStyle}>
-                                        <div style={{ display: 'flex', gap: '8px' }}>
-                                            <button onClick={() => openEditForm(ad, index)} style={{ padding: '8px 16px', backgroundColor: '#f1f5f9', color: '#1e293b', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Edit</button>
-                                            <button onClick={() => handleDeleteAd(index)} style={{ padding: '8px 16px', backgroundColor: '#fff1f2', color: '#e11d48', border: '1px solid #ffe4e6', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Delete</button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
+                                        </td>
+                                        <td style={tdStyle}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }} onClick={() => handleToggleActive(ad)}>
+                                                <div style={{
+                                                    width: '36px',
+                                                    height: '20px',
+                                                    borderRadius: '10px',
+                                                    backgroundColor: (isUnified ? ad.enabled : ad.active) ? '#10b981' : '#cbd5e1',
+                                                    position: 'relative',
+                                                    transition: 'all 0.2s'
+                                                }}>
+                                                    <div style={{
+                                                        width: '14px',
+                                                        height: '14px',
+                                                        borderRadius: '50%',
+                                                        backgroundColor: 'white',
+                                                        position: 'absolute',
+                                                        top: '3px',
+                                                        left: (isUnified ? ad.enabled : ad.active) ? '19px' : '3px',
+                                                        transition: 'all 0.2s'
+                                                    }} />
+                                                </div>
+                                                <span style={{ fontSize: '13px', color: (isUnified ? ad.enabled : ad.active) ? '#10b981' : '#64748b', fontWeight: '600' }}>
+                                                    {(isUnified ? ad.enabled : ad.active) ? 'Active' : 'Paused'}
+                                                </span>
+                                            </div>
+                                        </td>
+                                        <td style={tdStyle}>
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button onClick={() => openEditForm(ad)} style={{ padding: '8px 16px', backgroundColor: '#f1f5f9', color: '#1e293b', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Edit</button>
+                                                <button onClick={() => handleDeleteAd(ad)} style={{ padding: '8px 16px', backgroundColor: '#fff1f2', color: '#e11d48', border: '1px solid #ffe4e6', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Delete</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
                         </TableLayout>
                     </div>
                 </>
@@ -532,6 +555,19 @@ const AdvertisementManager = ({ shops, storageFiles }) => {
                                         ))}
                                     </div>
                                 )}
+                            </div>
+
+                            <div style={{ marginBottom: '20px' }}>
+                                <label style={labelStyle}>Display Duration ({formData.duration}s)</label>
+                                <input
+                                    type="range"
+                                    min="5"
+                                    max="60"
+                                    step="5"
+                                    value={formData.duration}
+                                    onChange={(e) => setFormData({ ...formData, duration: parseInt(e.target.value) })}
+                                    style={{ width: '100%', accentColor: COLORS.primary }}
+                                />
                             </div>
 
                             <div style={{ marginBottom: '30px' }}>

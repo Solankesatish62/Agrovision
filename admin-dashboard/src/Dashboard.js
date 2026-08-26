@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { db } from './firebase';
-import { collection, onSnapshot, query, where, orderBy, doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth } from './firebase';
+import { collection, onSnapshot, query, where, orderBy, doc, getDoc, getDocs, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { signOut } from 'firebase/auth';
 
 // Shared Components
 import NavButton from './components/Shared/NavButton';
@@ -10,6 +11,7 @@ import { COLORS, SHADOWS } from './components/Shared/Styles';
 // Feature Components
 import MonitoringTable from './components/Monitoring/MonitoringTable';
 import OnboardingTable from './components/Shops/OnboardingTable';
+import ShopRegistrationForm from './components/Shops/ShopRegistrationForm';
 import AppUpdatesView from './components/Updates/AppUpdatesView';
 import MedicineTable from './components/Medicines/MedicineTable';
 import MedicineForm from './components/Medicines/MedicineForm';
@@ -38,6 +40,7 @@ const Dashboard = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [editingMedicine, setEditingMedicine] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isShopFormOpen, setIsShopFormOpen] = useState(false);
   const [incompleteSearchTerm, setIncompleteSearchTerm] = useState('');
 
   // 🚀 Storage Assets Data (Cached in Dashboard to prevent re-loading)
@@ -75,14 +78,21 @@ const Dashboard = () => {
 
   // 🚀 Today's Summary
   useEffect(() => {
-    const localISOTime = new Date().toISOString().split('T')[0];
-    const unsubscribe = onSnapshot(query(collection(db, 'daily_scans'), where('date', '==', localISOTime)), (snapshot) => {
+    const now = new Date();
+    // India Offset +5:30
+    const indiaNow = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    const todayStr = indiaNow.toISOString().split('T')[0];
+    console.log("Monitoring scans for India Local Date:", todayStr);
+
+    const unsubscribe = onSnapshot(query(collection(db, 'daily_scans'), where('date', '==', todayStr)), (snapshot) => {
       const scanMap = {};
       let total = 0;
       snapshot.docs.forEach(doc => {
         const d = doc.data();
-        scanMap[d.shopId] = d.scanCount;
-        total += d.scanCount;
+        if (d.shopId) {
+          scanMap[d.shopId] = d.scanCount;
+          total += d.scanCount;
+        }
       });
       setScans(scanMap);
       setStats(prev => ({ ...prev, totalScans: total }));
@@ -236,7 +246,25 @@ const Dashboard = () => {
   const handleDeleteShop = async (shopId) => {
     if (window.confirm(`Are you sure you want to delete this retail partner? This action cannot be undone.`)) {
       try {
+        // 1. Delete Shop Document
         await deleteDoc(doc(db, 'shops', shopId));
+
+        // 2. Also cleanup corresponding Shopkeeper record (if it exists)
+        // Usually, shopId and shopkeeper mobile/id are related.
+        // We'll search for shopkeeper records linked to this shopId.
+        const sq = query(collection(db, 'shopkeepers'), where('shopId', '==', shopId));
+        const sks = await getDocs(sq);
+        for (const skDoc of sks.docs) {
+            await deleteDoc(skDoc.ref);
+        }
+
+        // 3. Delete linked Kiosks (Hardware IDs)
+        const kq = query(collection(db, 'kiosks'), where('shopId', '==', shopId));
+        const ks = await getDocs(kq);
+        for (const kDoc of ks.docs) {
+            await deleteDoc(kDoc.ref);
+        }
+
       } catch (error) {
         console.error("Error deleting shop:", error);
         alert('Failed to delete shop.');
@@ -300,15 +328,15 @@ const Dashboard = () => {
 
   const visibleKiosks = useMemo(() => {
     const shopIds = new Set(shops.map(s => s.id));
-    return kiosks.filter(k => shopIds.has(k.id));
+    return kiosks.filter(k => k.shopId && shopIds.has(k.shopId));
   }, [kiosks, shops]);
 
   const derivedStats = useMemo(() => {
     const now = Date.now();
     const online = visibleKiosks.filter(k => {
       const lastActive = formatTimestamp(k.lastActiveTimestamp);
-      const isRecent = (now - lastActive) < 90 * 1000;
-      return isRecent && k.status === 'ONLINE';
+      const isRecent = (now - lastActive) < 25 * 60 * 1000; // 25 minute threshold
+      return isRecent;
     }).length;
 
     return {
@@ -320,10 +348,44 @@ const Dashboard = () => {
     };
   }, [visibleKiosks, stats.totalScans, stats.totalShops]);
 
+  const handleLogout = async () => {
+    if (window.confirm('Are you sure you want to log out?')) {
+      try {
+        await signOut(auth);
+      } catch (error) {
+        console.error("Error logging out:", error);
+      }
+    }
+  };
+
   const activeViewContent = useMemo(() => {
     const viewMap = {
       'monitoring': <MonitoringTable kiosks={visibleKiosks} scans={scans} formatTimestamp={formatTimestamp} />,
-      'onboarding': <OnboardingTable shops={shops} formatTimestamp={formatTimestamp} onDelete={handleDeleteShop} />,
+      'onboarding': (
+        <div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '24px' }}>
+                <button
+                    onClick={() => setIsShopFormOpen(true)}
+                    style={{
+                        padding: '12px 24px',
+                        backgroundColor: COLORS.primary,
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '12px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        boxShadow: SHADOWS.md
+                    }}
+                >
+                    <i className="fas fa-plus"></i> Register New Partner
+                </button>
+            </div>
+            <OnboardingTable shops={shops} formatTimestamp={formatTimestamp} onDelete={handleDeleteShop} />
+        </div>
+      ),
       'database': <DatabaseManager files={storageFiles} loading={isStorageLoading} onRefresh={fetchStorageFiles} />,
       'medicines': <MedicineTable medicines={filteredMedicines} searchTerm={searchTerm} setSearchTerm={setSearchTerm} onAdd={openAddForm} onEdit={openEditForm} onDelete={handleDeleteMedicine} onBulk={() => setActiveView('bulk-import')} />,
       'ads': <AdvertisementManager shops={shops} storageFiles={storageFiles} />,
@@ -444,6 +506,9 @@ const Dashboard = () => {
           <NavButton active={activeView === 'database'} onClick={() => setActiveView('database')} label="Database" icon="fa-database" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'incomplete'} onClick={() => setActiveView('incomplete')} label="Data Health" icon="fa-stethoscope" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'updates'} onClick={() => setActiveView('updates')} label="App Releases" icon="fa-rocket" isCollapsed={isSidebarCollapsed} />
+          <div style={{ marginTop: 'auto', borderTop: `1px solid ${COLORS.border}`, paddingTop: '16px' }}>
+            <NavButton onClick={handleLogout} label="Logout" icon="fa-sign-out-alt" isCollapsed={isSidebarCollapsed} style={{ color: COLORS.danger }} />
+          </div>
         </div>
 
         {!isSidebarCollapsed && (
@@ -522,6 +587,31 @@ const Dashboard = () => {
                       setIsFormOpen(false);
                       setEditingMedicine(null);
                   }}
+              />
+          </div>
+        )}
+
+        {isShopFormOpen && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'rgba(15, 23, 42, 0.8)',
+            zIndex: 2000,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: '20px',
+            backdropFilter: 'blur(8px)'
+          }}>
+              <ShopRegistrationForm
+                  onSuccess={() => {
+                      setIsShopFormOpen(false);
+                      alert('Retail Partner registered successfully!');
+                  }}
+                  onCancel={() => setIsShopFormOpen(false)}
               />
           </div>
         )}

@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      // TEMPORARY: Allow all access to debug upload issues
+      // WE WILL RESTRICT THIS AFTER TESTING
+      allow read, write: if true;
+    }
+  }
+}

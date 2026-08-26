@@ -38,6 +38,8 @@ public final class ResultRenderer {
 
     // Standard UI
     private final TextView tvMedicineName;
+    private final TextView tvManufacturer;
+    private final TextView tvChemicalComposition;
     private final ViewPager2 imagePager;
     private final RecyclerView infoList;
 
@@ -48,6 +50,8 @@ public final class ResultRenderer {
             View standardLayout,
             View unknownLayout,
             TextView tvMedicineName,
+            TextView tvManufacturer,
+            TextView tvChemicalComposition,
             ViewPager2 imagePager,
             RecyclerView infoList,
             TextView tvUnknownHeader
@@ -55,6 +59,8 @@ public final class ResultRenderer {
         this.standardLayout = standardLayout;
         this.unknownLayout = unknownLayout;
         this.tvMedicineName = tvMedicineName;
+        this.tvManufacturer = tvManufacturer;
+        this.tvChemicalComposition = tvChemicalComposition;
         this.imagePager = imagePager;
         this.infoList = infoList;
         this.tvUnknownHeader = tvUnknownHeader;
@@ -84,6 +90,16 @@ public final class ResultRenderer {
 
         // Title
         tvMedicineName.setText(result.displayName);
+
+        // Secondary Info
+        if (tvManufacturer != null) {
+            tvManufacturer.setText(result.company != null ? result.company : "");
+            tvManufacturer.setVisibility(result.company != null && !result.company.isEmpty() ? View.VISIBLE : View.GONE);
+        }
+        if (tvChemicalComposition != null) {
+            tvChemicalComposition.setText(result.chemicalName != null ? result.chemicalName : "");
+            tvChemicalComposition.setVisibility(result.chemicalName != null && !result.chemicalName.isEmpty() ? View.VISIBLE : View.GONE);
+        }
 
         // Images
         renderImages(result.imageUrls);
