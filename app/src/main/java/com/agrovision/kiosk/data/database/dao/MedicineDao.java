@@ -68,6 +68,12 @@ public interface MedicineDao {
     void deleteByIds(List<String> ids);
 
     /**
+     * Search medicines by query across multiple fields.
+     */
+    @Query("SELECT * FROM medicines WHERE normalizedName LIKE :query || '%' OR name LIKE '%' || :query || '%' OR chemicalName LIKE '%' || :query || '%' OR company LIKE '%' || :query || '%' OR searchKeywords LIKE '%' || :query || '%'")
+    List<MedicineEntity> searchMedicines(String query);
+
+    /**
      * Fetch a medicine by its barcode prefix.
      *
      * Uses LIKE to search within the CSV string of prefixes.

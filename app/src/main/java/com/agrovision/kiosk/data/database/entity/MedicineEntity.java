@@ -99,6 +99,16 @@ public class MedicineEntity {
     public String searchKeywords;
 
     /**
+     * Normalized name for fast searching (lowercase, no special chars).
+     */
+    public String normalizedName;
+
+    /**
+     * Marathi name of the medicine (if available).
+     */
+    public String marathiName;
+
+    /**
      * QR/Barcode Prefixes for high-speed matching.
      *
      * Stored as CSV string via StringListConverter.

@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import TableLayout from '../Shared/TableLayout';
 import { trStyle, tdStyle, tdBoldStyle, badgeStyle, COLORS, SHADOWS } from '../Shared/Styles';
+import { calculateMatchScore } from '../../utils/AssetMatcher';
+import { storage } from '../../firebase';
+import { ref, getDownloadURL, getMetadata } from 'firebase/storage';
 
 const DatabaseManager = ({ files, loading, onRefresh }) => {
     const [activeTab, setActiveTab] = useState('images');
     const [searchTerm, setSearchTerm] = useState('');
     const [playingUrl, setPlayingUrl] = useState(null);
     const [copiedUrl, setCopiedUrl] = useState(null);
+    const [resolvedFiles, setResolvedFiles] = useState({}); // { fullPath: { url, metadata } }
+    const [page, setPage] = useState(1);
+    const pageSize = 20;
+
     const audioRef = useRef(null);
 
     const folders = [
@@ -23,7 +30,23 @@ const DatabaseManager = ({ files, loading, onRefresh }) => {
         };
     }, []);
 
-    const toggleAudio = (url) => {
+    const toggleAudio = async (asset) => {
+        let url = asset.url || resolvedFiles[asset.fullPath]?.url;
+
+        if (!url) {
+            try {
+                const assetRef = ref(storage, asset.fullPath);
+                url = await getDownloadURL(assetRef);
+                setResolvedFiles(prev => ({
+                    ...prev,
+                    [asset.fullPath]: { ...prev[asset.fullPath], url }
+                }));
+            } catch (e) {
+                alert("Error getting audio URL: " + e.message);
+                return;
+            }
+        }
+
         if (playingUrl === url) {
             audioRef.current.pause();
             setPlayingUrl(null);
@@ -38,7 +61,23 @@ const DatabaseManager = ({ files, loading, onRefresh }) => {
         }
     };
 
-    const copyToClipboard = (url) => {
+    const copyToClipboard = async (asset) => {
+        let url = asset.url || resolvedFiles[asset.fullPath]?.url;
+
+        if (!url) {
+            try {
+                const assetRef = ref(storage, asset.fullPath);
+                url = await getDownloadURL(assetRef);
+                setResolvedFiles(prev => ({
+                    ...prev,
+                    [asset.fullPath]: { ...prev[asset.fullPath], url }
+                }));
+            } catch (e) {
+                alert("Error getting URL: " + e.message);
+                return;
+            }
+        }
+
         navigator.clipboard.writeText(url);
         setCopiedUrl(url);
         setTimeout(() => setCopiedUrl(null), 2000);
@@ -55,9 +94,48 @@ const DatabaseManager = ({ files, loading, onRefresh }) => {
 
     const filteredFiles = useMemo(() => {
         const currentFiles = files[activeTab] || [];
+        setPage(1); // Reset page on tab or search change
+
         if (!searchTerm) return currentFiles;
-        return currentFiles.filter(f => f.name.toLowerCase().includes(searchTerm.toLowerCase()));
+
+        return currentFiles
+            .map(f => ({ ...f, score: calculateMatchScore(f.name, [searchTerm]) }))
+            .filter(f => f.score > 0)
+            .sort((a, b) => b.score - a.score);
     }, [files, activeTab, searchTerm]);
+
+    const pagedFiles = useMemo(() => {
+        return filteredFiles.slice(0, page * pageSize);
+    }, [filteredFiles, page]);
+
+    // Fetch metadata and URLs for the current page
+    useEffect(() => {
+        if (pagedFiles.length === 0) return;
+
+        const fetchMissingData = async () => {
+            const newResolved = { ...resolvedFiles };
+            let changed = false;
+
+            for (const file of pagedFiles) {
+                if (newResolved[file.fullPath]?.url && newResolved[file.fullPath]?.metadata) continue;
+
+                try {
+                    const assetRef = ref(storage, file.fullPath);
+                    const [url, metadata] = await Promise.all([
+                        newResolved[file.fullPath]?.url ? Promise.resolve(newResolved[file.fullPath].url) : getDownloadURL(assetRef),
+                        newResolved[file.fullPath]?.metadata ? Promise.resolve(newResolved[file.fullPath].metadata) : getMetadata(assetRef)
+                    ]);
+
+                    newResolved[file.fullPath] = { url, metadata };
+                    changed = true;
+                } catch (e) { console.warn("Failed to fetch asset info", e); }
+            }
+
+            if (changed) setResolvedFiles(newResolved);
+        };
+
+        fetchMissingData();
+    }, [pagedFiles]);
 
     return (
         <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
@@ -111,7 +189,7 @@ const DatabaseManager = ({ files, loading, onRefresh }) => {
                 {folders.map(folder => (
                     <button
                         key={folder.id}
-                        onClick={() => setActiveTab(folder.id)}
+                        onClick={() => { setActiveTab(folder.id); setPage(1); }}
                         style={{
                             padding: '10px 20px',
                             borderRadius: '8px',
@@ -146,34 +224,58 @@ const DatabaseManager = ({ files, loading, onRefresh }) => {
             ) : (
                 <div style={{ overflowX: 'auto', borderRadius: '12px', border: `1px solid ${COLORS.border}` }}>
                     <TableLayout headers={['#', 'File Name', 'Type', 'Size', 'Created', 'Action']}>
-                        {filteredFiles.map((file, index) => (
-                            <tr key={file.fullPath} style={trStyle}>
-                                <td style={{ ...tdStyle, color: '#94a3b8', fontSize: '13px', fontWeight: '600' }}>{index + 1}</td>
-                                <td style={tdBoldStyle}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        {activeTab === 'images' && (
-                                            <img src={file.url} alt="" style={{ width: '40px', height: '40px', borderRadius: '6px', objectFit: 'cover', border: `1px solid ${COLORS.border}` }} />
-                                        )}
-                                        <div style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            {file.name}
+                        {pagedFiles.map((file, index) => {
+                            const resolved = resolvedFiles[file.fullPath] || {};
+                            return (
+                                <tr key={file.fullPath} style={trStyle}>
+                                    <td style={{ ...tdStyle, color: '#94a3b8', fontSize: '13px', fontWeight: '600' }}>{index + 1}</td>
+                                    <td style={tdBoldStyle}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            {activeTab === 'images' && (
+                                                resolved.url ? (
+                                                    <img src={resolved.url} alt="" style={{ width: '40px', height: '40px', borderRadius: '6px', objectFit: 'cover', border: `1px solid ${COLORS.border}` }} />
+                                                ) : (
+                                                    <div style={{ width: '40px', height: '40px', borderRadius: '6px', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px' }}>...</div>
+                                                )
+                                            )}
+                                            <div style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {file.name}
+                                            </div>
                                         </div>
-                                    </div>
-                                </td>
-                                <td style={tdStyle}>
-                                    <span style={{ ...badgeStyle, backgroundColor: '#f1f5f9', color: COLORS.textMain }}>
-                                        {file.contentType?.split('/')[1]?.toUpperCase() || 'FILE'}
-                                    </span>
-                                </td>
-                                <td style={tdStyle}>{formatBytes(file.size)}</td>
-                                <td style={tdStyle}>{new Date(file.timeCreated).toLocaleDateString()}</td>
-                                <td style={tdStyle}>
-                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                        {activeTab === 'audio' && (
+                                    </td>
+                                    <td style={tdStyle}>
+                                        <span style={{ ...badgeStyle, backgroundColor: '#f1f5f9', color: COLORS.textMain }}>
+                                            {resolved.metadata?.contentType?.split('/')[1]?.toUpperCase() || '...'}
+                                        </span>
+                                    </td>
+                                    <td style={tdStyle}>{resolved.metadata ? formatBytes(resolved.metadata.size) : '...'}</td>
+                                    <td style={tdStyle}>{resolved.metadata ? new Date(resolved.metadata.timeCreated).toLocaleDateString() : '...'}</td>
+                                    <td style={tdStyle}>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            {activeTab === 'audio' && (
+                                                <button
+                                                    onClick={() => toggleAudio(file)}
+                                                    style={{
+                                                        padding: '8px 12px',
+                                                        backgroundColor: playingUrl === resolved.url && resolved.url ? COLORS.danger : COLORS.secondary,
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        borderRadius: '8px',
+                                                        cursor: 'pointer',
+                                                        fontWeight: '600',
+                                                        fontSize: '13px',
+                                                        boxShadow: SHADOWS.sm,
+                                                        minWidth: '90px'
+                                                    }}
+                                                >
+                                                    {playingUrl === resolved.url && resolved.url ? '⏸️ Pause' : '▶️ Play'}
+                                                </button>
+                                            )}
                                             <button
-                                                onClick={() => toggleAudio(file.url)}
+                                                onClick={() => copyToClipboard(file)}
                                                 style={{
-                                                    padding: '8px 12px',
-                                                    backgroundColor: playingUrl === file.url ? COLORS.danger : COLORS.secondary,
+                                                    padding: '8px 16px',
+                                                    backgroundColor: copiedUrl === resolved.url && resolved.url ? COLORS.secondary : COLORS.primary,
                                                     color: 'white',
                                                     border: 'none',
                                                     borderRadius: '8px',
@@ -181,38 +283,39 @@ const DatabaseManager = ({ files, loading, onRefresh }) => {
                                                     fontWeight: '600',
                                                     fontSize: '13px',
                                                     boxShadow: SHADOWS.sm,
-                                                    minWidth: '90px'
+                                                    minWidth: '110px',
+                                                    transition: 'all 0.3s ease'
                                                 }}
                                             >
-                                                {playingUrl === file.url ? '⏸️ Pause' : '▶️ Play'}
+                                                {copiedUrl === resolved.url && resolved.url ? '✅ Copied!' : 'Copy URL'}
                                             </button>
-                                        )}
-                                        <button
-                                            onClick={() => copyToClipboard(file.url)}
-                                            style={{
-                                                padding: '8px 16px',
-                                                backgroundColor: copiedUrl === file.url ? COLORS.secondary : COLORS.primary,
-                                                color: 'white',
-                                                border: 'none',
-                                                borderRadius: '8px',
-                                                cursor: 'pointer',
-                                                fontWeight: '600',
-                                                fontSize: '13px',
-                                                boxShadow: SHADOWS.sm,
-                                                minWidth: '110px',
-                                                transition: 'all 0.3s ease'
-                                            }}
-                                        >
-                                            {copiedUrl === file.url ? '✅ Copied!' : 'Copy URL'}
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
+                                        </div>
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </TableLayout>
-                    {filteredFiles.length === 0 && (
+                    {pagedFiles.length === 0 && (
                         <div style={{ textAlign: 'center', padding: '50px', color: '#94a3b8' }}>
                             <p>No files found in this folder.</p>
+                        </div>
+                    )}
+                    {filteredFiles.length > pagedFiles.length && (
+                        <div style={{ textAlign: 'center', padding: '20px' }}>
+                            <button
+                                onClick={() => setPage(p => p + 1)}
+                                style={{
+                                    padding: '10px 30px',
+                                    borderRadius: '10px',
+                                    border: `1px solid ${COLORS.primary}`,
+                                    backgroundColor: 'white',
+                                    color: COLORS.primary,
+                                    cursor: 'pointer',
+                                    fontWeight: '600'
+                                }}
+                            >
+                                Load More Assets ({filteredFiles.length - pagedFiles.length} remaining)
+                            </button>
                         </div>
                     )}
                 </div>

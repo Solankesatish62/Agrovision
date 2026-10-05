@@ -35,6 +35,13 @@ public final class MedicineMapper {
         entity.updatedAt = medicine.getUpdatedAt();
         entity.isRemote = medicine.isRemote();
 
+        // 🚀 NORMALIZATION for Search
+        if (entity.name != null) {
+            entity.normalizedName = entity.name.toLowerCase(java.util.Locale.ROOT)
+                    .replaceAll("[^a-z0-9]", "")
+                    .trim();
+        }
+
         return entity;
     }
 

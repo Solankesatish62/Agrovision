@@ -1,7 +1,10 @@
-import React, { useState, useMemo } from 'react';
-import { labelStyle, inputStyle, exportBtnStyle } from '../Shared/Styles';
+import React, { useState, useMemo, useEffect } from 'react';
+import { labelStyle, inputStyle, exportBtnStyle, SHADOWS } from '../Shared/Styles';
+import { searchAssetsByNameOrQuery } from '../../utils/AssetMatcher';
+import { storage } from '../../firebase';
+import { ref, getDownloadURL } from 'firebase/storage';
 
-const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
+const MedicineForm = ({ medicine, medicines = [], storageFiles = { images: [], audio: [] }, onSave, onCancel }) => {
   const cleanDataField = (val) => {
     if (!val) return '';
     // Removes sequences of 2 or more dots/dashes/pipes at the end, often used as separators in sources
@@ -43,9 +46,21 @@ const MedicineForm = ({ medicine, storageFiles, onSave, onCancel }) => {
   });
 
   const [bulkOcr, setBulkOcr] = useState('');
+  const [bulkImageSearch, setBulkImageSearch] = useState('');
   const [smartPasteText, setSmartPasteText] = useState('');
   const [activeDropdown, setActiveDropdown] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
+  const [resolvedUrls, setResolvedUrls] = useState({});
+  const [debouncedFormData, setDebouncedFormData] = useState(formData);
+
+  // Debounce form data changes for smooth performance
+  useEffect(() => {
+    const handler = setTimeout(() => {
+        setDebouncedFormData(formData);
+    }, 200);
+    return () => clearTimeout(handler);
+  }, [formData]);
 
   const handleCopyData = () => {
     const textToCopy = `Medicine Name (Unique ID): ${formData.medicineName}
@@ -62,75 +77,138 @@ Usage Instructions (English): ${formData.usage}`;
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const assetSuggestions = useMemo(() => {
-    if (!activeDropdown || !storageFiles) return [];
+  const currentQuery = useMemo(() => {
+    if (!activeDropdown) return '';
     const { type, index } = activeDropdown;
-    const list = type === 'audio' ? storageFiles.audio : storageFiles.images;
+    return type === 'images' ? (formData.imageUrls[index] || '') : (formData.audioUrls || '');
+  }, [activeDropdown, formData.imageUrls, formData.audioUrls]);
 
-    // 🚀 Dynamic Search: Use current field text if user is typing, fallback to medicine name
-    const currentInput = type === 'images' ? (formData.imageUrls[index] || '') : (formData.audioUrls || '');
-    const isUrl = currentInput.toLowerCase().startsWith('http');
-    const term = (isUrl || !currentInput.trim() ? formData.medicineName : currentInput).trim().toLowerCase();
+  const assetSuggestions = useMemo(() => {
+    if (!activeDropdown) return [];
+    const { type } = activeDropdown;
+    const isAudio = type === 'audio';
+    const storageList = isAudio
+      ? (storageFiles?.audio || [])
+      : (storageFiles?.images || []);
 
-    let availableList = list;
-    if (type === 'images') {
-        const selectedUrls = formData.imageUrls.filter((u, idx) => u && u.trim() !== '' && idx !== index);
-        availableList = list.filter(f => !selectedUrls.includes(f.url));
-    }
+    const query = currentQuery.trim();
 
-    if (!term) return availableList.slice(0, 15);
+    return searchAssetsByNameOrQuery({
+      storageList,
+      medicineName: debouncedFormData.medicineName,
+      query: query,
+      allMedicines: medicines || [],
+      isAudio,
+      limit: 20
+    });
+  }, [activeDropdown, storageFiles, medicines, debouncedFormData.medicineName, currentQuery]);
 
-    const cleanTerm = term.replace(/[^a-z0-9]/g, '');
-    const termWords = term.split(/[^a-z0-9]+/).filter(w => w.length >= 2);
+  // Lazy load URLs for suggestions when dropdown is active
+  useEffect(() => {
+    if (!activeDropdown || assetSuggestions.length === 0) return;
 
-    return availableList
-        .map(f => {
-            const fileName = f.name.toLowerCase();
-            const baseName = fileName.split('.')[0];
-            const cleanFileName = baseName.replace(/[^a-z0-9]/g, '');
-            const fileWords = baseName.split(/[^a-z0-9]+/).filter(w => w.length >= 2);
+    const fetchUrls = async () => {
+        const newUrls = { ...resolvedUrls };
+        let changed = false;
 
-            let score = 0;
+        // Only fetch top 8 to save bandwidth
+        const toFetch = assetSuggestions.slice(0, 8);
+        for (const asset of toFetch) {
+            if (asset.url) continue; // Already has URL (from DB cross-ref)
+            if (newUrls[asset.fullPath]) continue; // Already resolved
 
-            // 1. Exact Match (Highest Priority)
-            if (cleanFileName === cleanTerm) {
-                score += 100;
-            }
-            // 2. Starts With Match
-            else if (cleanFileName.startsWith(cleanTerm)) {
-                score += 60;
-            }
-            // 3. Name contained in Filename
-            else if (cleanFileName.includes(cleanTerm)) {
-                score += 40;
-            }
+            try {
+                const assetRef = ref(storage, asset.fullPath);
+                const url = await getDownloadURL(assetRef);
+                newUrls[asset.fullPath] = url;
+                changed = true;
+            } catch (e) { console.warn("Failed to fetch asset URL", e); }
+        }
 
-            // 4. Word Intersection (Smart matching for "Bio R303" vs "bior303")
-            const commonWords = termWords.filter(w => fileWords.includes(w));
-            score += (commonWords.length * 25);
+        if (changed) setResolvedUrls(newUrls);
+    };
 
-            // 5. Reversed containment (Filename contained in Name - only if filename is significant)
-            if (cleanFileName.length >= 4 && cleanTerm.includes(cleanFileName)) {
-                score += 30;
-            }
+    fetchUrls();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDropdown, assetSuggestions]);
 
-            return { ...f, score };
-        })
-        .filter(f => f.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 15);
-  }, [activeDropdown, storageFiles, formData.medicineName, formData.imageUrls]);
-
-  const handleAssetSelect = (url) => {
+  const handleAssetSelect = async (asset) => {
     if (!activeDropdown) return;
     const { type, index } = activeDropdown;
 
-    if (type === 'images') {
-        handleArrayChange(index, url, 'imageUrls');
-    } else {
-        setFormData({ ...formData, audioUrls: url });
+    let url = asset.url;
+    if (!url && asset.fullPath) {
+        // Fetch URL if not already resolved
+        url = resolvedUrls[asset.fullPath];
+        if (!url) {
+            try {
+                const assetRef = ref(storage, asset.fullPath);
+                url = await getDownloadURL(assetRef);
+            } catch (e) {
+                alert("Failed to select asset: " + e.message);
+                return;
+            }
+        }
     }
-    setActiveDropdown(null);
+
+    if (type === 'images') {
+        const newImages = [...formData.imageUrls];
+        newImages[index] = url;
+        setFormData(prev => ({ ...prev, imageUrls: newImages }));
+
+        // Auto-advance dropdown to next search query field if available
+        const nextIndex = index + 1;
+        if (nextIndex < newImages.length && (!newImages[nextIndex] || !newImages[nextIndex].trim().toLowerCase().startsWith('http'))) {
+            setActiveDropdown({ type: 'images', index: nextIndex });
+        } else {
+            setActiveDropdown(null);
+        }
+    } else {
+        setFormData(prev => ({ ...prev, audioUrls: url }));
+        setActiveDropdown(null);
+    }
+  };
+
+  const handleDistributeImageQueries = () => {
+    if (!bulkImageSearch.trim()) return;
+
+    const queries = bulkImageSearch
+      .split(/[,|\n]+/)
+      .map(q => q.trim())
+      .filter(q => q !== '');
+
+    if (queries.length === 0) return;
+
+    const newImageUrls = [...formData.imageUrls];
+
+    let queryIdx = 0;
+    // Fill empty or non-HTTP query slots first
+    for (let i = 0; i < newImageUrls.length && queryIdx < queries.length; i++) {
+      const current = newImageUrls[i]?.trim() || '';
+      if (!current || !current.toLowerCase().startsWith('http')) {
+        newImageUrls[i] = queries[queryIdx];
+        queryIdx++;
+      }
+    }
+
+    // Append remaining queries as new image fields
+    while (queryIdx < queries.length) {
+      newImageUrls.push(queries[queryIdx]);
+      queryIdx++;
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      imageUrls: newImageUrls
+    }));
+
+    setBulkImageSearch('');
+
+    // Focus first query index to trigger auto-advancing dropdown sequence
+    const firstQueryIndex = newImageUrls.findIndex(u => u === queries[0]);
+    if (firstQueryIndex !== -1) {
+      setActiveDropdown({ type: 'images', index: firstQueryIndex });
+    }
   };
 
   const handleSmartPaste = () => {
@@ -149,20 +227,16 @@ Usage Instructions (English): ${formData.usage}`;
 
     const extractValue = (targetLabel) => {
       const escapedLabel = targetLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // Enhanced regex to skip bullet points (*, •, -) and handle multi-line content
       const regex = new RegExp(`(?:^|\\n)\\s*[*•-]?\\s*${escapedLabel}\\s*[:：]\\s*([\\s\\S]*?)(?=\\n\\s*[*•-]?\\s*(?:${labelPattern})\\s*[:：]|[🎯🌱🧪⚡⚠️•]|$)`, 'i');
       const match = smartPasteText.match(regex);
       if (!match) return null;
 
       let val = match[1].trim();
-      // Remove citation numbers like [1], [2], [1, 2, 3]
-      val = val.replace(/\[\d+(?:,\s*\d+)*\]/g, '');
 
-      // Remove common boilerplate/redundant sentences
+      val = val.replace(/\[\d+(?:,\s*\d+)*\]/g, '');
       val = val.replace(/पाठीवरील पंपाने पिकावर संपूर्ण पाने व्यवस्थित भिजतील अशी फवारणी.*?करावी[.]?/g, '');
       val = val.replace(/पिकावर संपूर्ण पाने व्यवस्थित भिजतील अशी फवारणी करावी[.]?/g, '');
 
-      // Clean up multiple spaces and trailing dashes/punctuation often left behind
       val = val.replace(/\s+/g, ' ').replace(/[\s\-._|]{2,}$/, '').trim();
       return val;
     };
@@ -181,15 +255,12 @@ Usage Instructions (English): ${formData.usage}`;
     const cib = extractValue('CIB&RC Registration Number');
     if (cib) newData.cibNo = cib;
 
-    // Mapping: "हे औषध काय काम करतं" == Target Crops (Description of work)
     const work = extractValue('हे औषध काय काम करतं');
     if (work) newData.crop = work;
 
-    // Mapping: "कोणती समस्या सोडवतं" == Target Diseases/Pests
     const disease = extractValue('कोणती समस्या सोडवतं');
     if (disease) newData.disease = disease;
 
-    // Combined Marathi Info: "कोणत्या पिकावर" + "कोणत्या टप्प्यात"
     const targetCrops = extractValue('कोणत्या पिकावर');
     const stageInfo = extractValue('कोणत्या टप्प्यात');
     let marathiParts = [];
@@ -197,7 +268,6 @@ Usage Instructions (English): ${formData.usage}`;
     if (stageInfo) marathiParts.push(`कोणत्या टप्प्यात: ${stageInfo}`);
     if (marathiParts.length > 0) newData.marathiInfo = marathiParts.join('\n\n');
 
-    // Usage Instructions: "मात्रा" + "प्रति एकर" + "कसं वापरायचं"
     const dose = extractValue('मात्रा');
     const acre = extractValue('प्रति एकर');
     const method = extractValue('कसं वापरायचं');
@@ -254,7 +324,6 @@ Usage Instructions (English): ${formData.usage}`;
       return;
     }
 
-    // Process bulk OCR if there's anything left there
     let finalKeywords = [...formData.ocrKeywords];
     if (bulkOcr.trim()) {
       const extra = bulkOcr.split(',').map(k => k.trim()).filter(k => k !== '');
@@ -311,8 +380,8 @@ Usage Instructions (English): ${formData.usage}`;
       margin: '0 auto',
       display: 'flex',
       flexDirection: 'column',
-      maxHeight: '90vh', // Limit height to 90% of viewport
-      overflow: 'hidden' // Contain children
+      maxHeight: '90vh',
+      overflow: 'hidden'
     }}>
       {/* Fixed Header */}
       <div style={{
@@ -455,29 +524,29 @@ Usage Instructions (English): ${formData.usage}`;
               <small style={{ color: '#60a5fa', marginTop: '5px', display: 'block' }}>Keywords will be split by comma and added to the list below.</small>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
               <div>
                 <label style={labelStyle}>OCR Keywords (Tokens)</label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
                   {formData.ocrKeywords.map((kw, i) => (
-                    <div key={i} style={{ display: 'flex', gap: '5px' }}>
-                      <input value={kw} onChange={(e) => handleArrayChange(i, e.target.value, 'ocrKeywords')} style={inputStyle} placeholder={`Keyword ${i + 1}`} />
+                    <div key={i} style={{ display: 'flex', gap: '5px', width: 'calc(20% - 10px)', minWidth: '150px' }}>
+                      <input value={kw} onChange={(e) => handleArrayChange(i, e.target.value, 'ocrKeywords')} style={{ ...inputStyle, padding: '8px 12px' }} placeholder={`Keyword ${i + 1}`} />
                       <button type="button" onClick={() => removeArrayField(i, 'ocrKeywords')} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>✕</button>
                     </div>
                   ))}
-                  <button type="button" onClick={() => addArrayField('ocrKeywords')} style={{ border: '1px dashed #cbd5e1', background: 'none', padding: '8px', borderRadius: '8px', cursor: 'pointer', color: '#64748b' }}>+ Add Keyword</button>
+                  <button type="button" onClick={() => addArrayField('ocrKeywords')} style={{ border: '1px dashed #cbd5e1', background: 'none', padding: '8px 15px', borderRadius: '8px', cursor: 'pointer', color: '#64748b', fontSize: '13px' }}>+ Add Keyword</button>
                 </div>
               </div>
               <div>
                 <label style={labelStyle}>Barcode/QR Prefixes</label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
                   {formData.barcodePrefixes.map((p, i) => (
-                    <div key={i} style={{ display: 'flex', gap: '5px' }}>
-                      <input value={p} onChange={(e) => handleArrayChange(i, e.target.value, 'barcodePrefixes')} style={inputStyle} placeholder={`Prefix ${i + 1}`} />
+                    <div key={i} style={{ display: 'flex', gap: '5px', width: 'calc(20% - 10px)', minWidth: '150px' }}>
+                      <input value={p} onChange={(e) => handleArrayChange(i, e.target.value, 'barcodePrefixes')} style={{ ...inputStyle, padding: '8px 12px' }} placeholder={`Prefix ${i + 1}`} />
                       <button type="button" onClick={() => removeArrayField(i, 'barcodePrefixes')} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>✕</button>
                     </div>
                   ))}
-                  <button type="button" onClick={() => addArrayField('barcodePrefixes')} style={{ border: '1px dashed #cbd5e1', background: 'none', padding: '8px', borderRadius: '8px', cursor: 'pointer', color: '#64748b' }}>+ Add Prefix</button>
+                  <button type="button" onClick={() => addArrayField('barcodePrefixes')} style={{ border: '1px dashed #cbd5e1', background: 'none', padding: '8px 15px', borderRadius: '8px', cursor: 'pointer', color: '#64748b', fontSize: '13px' }}>+ Add Prefix</button>
                 </div>
               </div>
             </div>
@@ -490,27 +559,106 @@ Usage Instructions (English): ${formData.usage}`;
               }
           }}>
             <h3 style={sectionTitleStyle}>🖼️ Media Assets</h3>
+
+            {/* Master Bulk Image Search Importer */}
+            <div style={{ backgroundColor: '#eff6ff', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px dashed #3b82f6' }}>
+              <label style={{ ...labelStyle, color: '#1e40af' }}>⚡ Bulk Image Search Importer (Comma Separated)</label>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <input
+                  type="text"
+                  value={bulkImageSearch}
+                  onChange={(e) => setBulkImageSearch(e.target.value)}
+                  style={{ ...inputStyle, flex: 1 }}
+                  placeholder="Paste multiple search terms: bior303 front, bior303 back, bior303 bottle, bior303 box..."
+                />
+                <button
+                  type="button"
+                  onClick={handleDistributeImageQueries}
+                  style={{ ...exportBtnStyle, backgroundColor: '#3b82f6', height: '42px', padding: '0 20px', minWidth: '160px' }}
+                >
+                  Distribute Queries
+                </button>
+              </div>
+              <small style={{ color: '#60a5fa', marginTop: '5px', display: 'block' }}>
+                Queries will be placed into separate Image fields below for 1-click auto-advancing selection.
+              </small>
+            </div>
+
             <div style={{ marginBottom: '20px' }}>
               <label style={labelStyle}>Image URLs (Minimum 1 Required)</label>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 {formData.imageUrls.map((url, i) => (
                   <div key={i} style={{ display: 'flex', gap: '5px', position: 'relative' }}>
-                      <input
-                        value={url}
-                        onChange={(e) => handleArrayChange(i, e.target.value, 'imageUrls')}
-                        onFocus={() => setActiveDropdown({ type: 'images', index: i })}
-                        style={inputStyle}
-                        placeholder={`Image URL ${i + 1}`}
-                      />
-                      {activeDropdown?.type === 'images' && activeDropdown?.index === i && assetSuggestions.length > 0 && (
-                        <div className="suggestion-box" style={{ position: 'absolute', top: '100%', left: 0, right: '35px', zIndex: 100, backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '10px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', maxHeight: '180px', overflowY: 'auto', marginTop: '5px' }}>
-                            <div style={{ padding: '8px 12px', fontSize: '11px', fontWeight: 'bold', color: '#64748b', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>Suggested Images</div>
-                            {assetSuggestions.map((f, idx) => (
-                                <div key={idx} onClick={() => handleAssetSelect(f.url)} style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f9ff'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                    <img src={f.url} alt="" style={{width: '32px', height: '32px', borderRadius: '6px', objectFit: 'cover'}} />
-                                    <span style={{whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#334155'}}>{f.name}</span>
+                      <div style={{ position: 'relative', flex: 1 }}>
+                        <input
+                            value={url}
+                            onChange={(e) => handleArrayChange(i, e.target.value, 'imageUrls')}
+                            onFocus={() => setActiveDropdown({ type: 'images', index: i })}
+                            style={{
+                                ...inputStyle,
+                                paddingRight: url ? '40px' : '16px'
+                            }}
+                            placeholder={`Image URL ${i + 1}`}
+                        />
+                        {url && url.startsWith('http') && (
+                            <button
+                                type="button"
+                                onClick={() => setPreviewImage(url)}
+                                title="Preview Image"
+                                style={{
+                                    position: 'absolute',
+                                    right: '8px',
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    background: '#f1f5f9',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    padding: '4px 6px',
+                                    cursor: 'pointer',
+                                    fontSize: '14px'
+                                }}
+                            >
+                                👁️
+                            </button>
+                        )}
+                      </div>
+                      {activeDropdown?.type === 'images' && activeDropdown?.index === i && (
+                        <div className="suggestion-box" style={{ position: 'absolute', top: '100%', left: 0, right: '35px', zIndex: 100, backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '10px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', maxHeight: '220px', overflowY: 'auto', marginTop: '5px' }}>
+                            <div style={{ padding: '8px 12px', fontSize: '11px', fontWeight: 'bold', color: '#64748b', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span>
+                                    {formData.imageUrls[i]?.trim() && !formData.imageUrls[i].trim().toLowerCase().startsWith('http')
+                                      ? `🔍 Search results for "${formData.imageUrls[i].trim()}"`
+                                      : (formData.medicineName ? `📦 Images matching "${formData.medicineName}"` : `🔍 Image Search`)}
+                                </span>
+                                <span style={{ fontSize: '10px', color: '#94a3b8' }}>{assetSuggestions.length} found</span>
+                            </div>
+                            {assetSuggestions.length > 0 ? (
+                                assetSuggestions.map((f, idx) => {
+                                    const imgUrl = f.url || resolvedUrls[f.fullPath];
+                                    return (
+                                        <div key={idx} onClick={() => handleAssetSelect(f)} style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f9ff'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                            {imgUrl ? (
+                                                <img src={imgUrl} alt="" style={{width: '32px', height: '32px', borderRadius: '6px', objectFit: 'cover'}} />
+                                            ) : (
+                                                <div style={{width: '32px', height: '32px', borderRadius: '6px', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px'}}>...</div>
+                                            )}
+                                            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                    <span style={{whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#334155', fontWeight: '500'}}>{f.name}</span>
+                                                    {f.isFromDb && <span style={{ fontSize: '9px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '1px 5px', borderRadius: '4px' }}>Database</span>}
+                                                </div>
+                                                {f.score && <span style={{ fontSize: '10px', color: '#10b981' }}>Match Score: {Math.round(f.score)}%</span>}
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            ) : (
+                                <div style={{ padding: '12px', fontSize: '12px', color: '#64748b', textAlign: 'center' }}>
+                                    {!formData.medicineName && !formData.imageUrls[i]?.trim()
+                                        ? "Enter a Medicine Name above or type a search query here to find images."
+                                        : `No matching images found. Type a filename or product name.`}
                                 </div>
-                            ))}
+                            )}
                         </div>
                       )}
                       <button type="button" onClick={() => removeArrayField(i, 'imageUrls')} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>✕</button>
@@ -529,15 +677,36 @@ Usage Instructions (English): ${formData.usage}`;
                 style={inputStyle}
                 placeholder="https://firebasestorage.googleapis.com/..."
               />
-              {activeDropdown?.type === 'audio' && assetSuggestions.length > 0 && (
-                <div className="suggestion-box" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '10px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', maxHeight: '180px', overflowY: 'auto', marginTop: '5px' }}>
-                    <div style={{ padding: '8px 12px', fontSize: '11px', fontWeight: 'bold', color: '#64748b', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>Suggested Audio Files</div>
-                    {assetSuggestions.map((f, idx) => (
-                        <div key={idx} onClick={() => handleAssetSelect(f.url)} style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f9ff'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
-                            <span style={{fontSize: '18px'}}>🎵</span>
-                            <span style={{whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#334155'}}>{f.name}</span>
+              {activeDropdown?.type === 'audio' && (
+                <div className="suggestion-box" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '10px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', maxHeight: '220px', overflowY: 'auto', marginTop: '5px' }}>
+                    <div style={{ padding: '8px 12px', fontSize: '11px', fontWeight: 'bold', color: '#64748b', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>
+                            {formData.audioUrls?.trim() && !formData.audioUrls.trim().toLowerCase().startsWith('http')
+                              ? `🎵 Search results for "${formData.audioUrls.trim()}"`
+                              : (formData.medicineName ? `🎵 Audio matching "${formData.medicineName}"` : `🎵 Audio Search`)}
+                        </span>
+                        <span style={{ fontSize: '10px', color: '#94a3b8' }}>{assetSuggestions.length} found</span>
+                    </div>
+                    {assetSuggestions.length > 0 ? (
+                        assetSuggestions.map((f, idx) => (
+                            <div key={idx} onClick={() => handleAssetSelect(f)} style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f9ff'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                <span style={{fontSize: '18px'}}>🎵</span>
+                                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#334155', fontWeight: '500'}}>{f.name}</span>
+                                        {f.isFromDb && <span style={{ fontSize: '9px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '1px 5px', borderRadius: '4px' }}>Database</span>}
+                                    </div>
+                                    {f.score && <span style={{ fontSize: '10px', color: '#10b981' }}>Match Score: {Math.round(f.score)}%</span>}
+                                </div>
+                            </div>
+                        ))
+                    ) : (
+                        <div style={{ padding: '12px', fontSize: '12px', color: '#64748b', textAlign: 'center' }}>
+                            {!formData.medicineName && !formData.audioUrls?.trim()
+                                ? "Enter a Medicine Name above or type a search query here to find audio files."
+                                : `No matching audio files found.`}
                         </div>
-                    ))}
+                    )}
                 </div>
               )}
             </div>
@@ -561,6 +730,29 @@ Usage Instructions (English): ${formData.usage}`;
           </button>
         </div>
       </form>
+
+      {/* Preview Modal */}
+      {previewImage && (
+        <div
+            onClick={() => setPreviewImage(null)}
+            style={{
+                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 3000,
+                display: 'flex', justifyContent: 'center', alignItems: 'center',
+                backdropFilter: 'blur(5px)'
+            }}
+        >
+            <div style={{ position: 'relative', maxWidth: '90%', maxHeight: '90%' }} onClick={e => e.stopPropagation()}>
+                <img src={previewImage} alt="Preview" style={{ maxWidth: '100%', maxHeight: '80vh', borderRadius: '12px', boxShadow: SHADOWS.xl }} />
+                <button
+                    onClick={() => setPreviewImage(null)}
+                    style={{ position: 'absolute', top: '-40px', right: '-40px', background: 'white', border: 'none', borderRadius: '50%', width: '40px', height: '40px', cursor: 'pointer', fontSize: '20px' }}
+                >
+                    ✕
+                </button>
+            </div>
+        </div>
+      )}
     </div>
   );
 

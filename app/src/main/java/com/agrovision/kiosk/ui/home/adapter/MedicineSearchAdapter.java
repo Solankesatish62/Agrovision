@@ -7,13 +7,14 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 import com.agrovision.kiosk.R;
+import com.agrovision.kiosk.data.model.Medicine;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MedicineSearchAdapter extends RecyclerView.Adapter<MedicineSearchAdapter.ViewHolder> {
-    private List<String> items = new ArrayList<>();
+    private List<Medicine> items = new ArrayList<>();
 
-    public void setItems(List<String> newItems) {
+    public void setItems(List<Medicine> newItems) {
         this.items = newItems;
         notifyDataSetChanged();
     }
@@ -27,7 +28,22 @@ public class MedicineSearchAdapter extends RecyclerView.Adapter<MedicineSearchAd
 
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
-        holder.tvName.setText(items.get(position));
+        Medicine medicine = items.get(position);
+        holder.tvName.setText(medicine.getName());
+        
+        if (medicine.getChemicalName() != null && !medicine.getChemicalName().isEmpty()) {
+            holder.tvChemical.setText(medicine.getChemicalName());
+            holder.tvChemical.setVisibility(View.VISIBLE);
+        } else {
+            holder.tvChemical.setVisibility(View.GONE);
+        }
+        
+        if (medicine.getCompany() != null && !medicine.getCompany().isEmpty()) {
+            holder.tvCompany.setText(medicine.getCompany());
+            holder.tvCompany.setVisibility(View.VISIBLE);
+        } else {
+            holder.tvCompany.setVisibility(View.GONE);
+        }
     }
 
     @Override
@@ -37,9 +53,13 @@ public class MedicineSearchAdapter extends RecyclerView.Adapter<MedicineSearchAd
 
     static class ViewHolder extends RecyclerView.ViewHolder {
         TextView tvName;
+        TextView tvChemical;
+        TextView tvCompany;
         ViewHolder(View view) {
             super(view);
             tvName = view.findViewById(R.id.tvMedicineName);
+            tvChemical = view.findViewById(R.id.tvChemicalName);
+            tvCompany = view.findViewById(R.id.tvCompanyName);
         }
     }
 }

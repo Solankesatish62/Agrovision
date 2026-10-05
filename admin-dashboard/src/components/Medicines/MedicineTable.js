@@ -54,7 +54,7 @@ const MedicineTable = ({ medicines, searchTerm, setSearchTerm, onAdd, onEdit, on
                         <div style={{ color: '#0f172a', fontWeight: '700', fontSize: '16px' }}>{name}</div>
                         <div style={{ color: '#64748b', fontSize: '12px', marginBottom: '6px' }}>{m.company || 'Unknown Company'}</div>
 
-                        <div style={{ fontSize: '13px', color: '#475569', fontWeight: '600' }}>
+                        <div style={{ fontSize: '13px', color: '#15803d', fontWeight: '700' }}>
                             {m.chemicalName || <span style={{color: '#cbd5e1', fontWeight: '400'}}>No chemical info</span>}
                         </div>
                         <div style={{ color: '#94a3b8', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>

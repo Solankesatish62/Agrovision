@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { db, auth } from './firebase';
-import { collection, onSnapshot, query, where, orderBy, doc, getDoc, getDocs, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth, storage } from './firebase';
+import { collection, onSnapshot, query, where, orderBy, doc, getDocs, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 
 // Shared Components
@@ -19,10 +19,10 @@ import BulkMedicineImporter from './components/Medicines/BulkMedicineImporter';
 import IncompleteTable from './components/Medicines/IncompleteTable';
 import DatabaseManager from './components/Database/DatabaseManager';
 import AdvertisementManager from './components/Ads/AdvertisementManager';
+import AnalyticsPage from './pages/Dashboard/AnalyticsPage';
 
 // Firebase Storage
-import { storage } from './firebase';
-import { ref, listAll, getDownloadURL, getMetadata } from 'firebase/storage';
+import { ref, listAll } from 'firebase/storage';
 
 // Utils
 import { formatTimestamp } from './utils/formatters';
@@ -111,7 +111,7 @@ const Dashboard = () => {
     return () => unsubscribe();
   }, []);
 
-  // 🚀 Fetch Storage Assets (Now starts on mount for immediate availability)
+  // 🚀 Fetch Storage Assets (Optimized for lazy loading)
   const fetchStorageFiles = async () => {
     setIsStorageLoading(true);
     const folders = [
@@ -126,22 +126,13 @@ const Dashboard = () => {
             try {
                 const storageRef = ref(storage, folder.path);
                 const listResult = await listAll(storageRef);
-                const filePromises = listResult.items.map(async (item) => {
-                    try {
-                        const url = await getDownloadURL(item);
-                        const metadata = await getMetadata(item);
-                        return {
-                            name: item.name,
-                            fullPath: item.fullPath,
-                            url,
-                            size: metadata.size,
-                            timeCreated: metadata.timeCreated,
-                            contentType: metadata.contentType
-                        };
-                    } catch (e) { return null; }
-                });
-                const resolvedFiles = await Promise.all(filePromises);
-                results[folder.id] = resolvedFiles.filter(f => f !== null);
+                // Only store basic info initially, fetch URL on demand
+                results[folder.id] = listResult.items.map(item => ({
+                    name: item.name,
+                    fullPath: item.fullPath,
+                    // url: null, // Will be fetched on demand
+                    // metadata: null
+                }));
             } catch (e) { results[folder.id] = []; }
         }
         setStorageFiles(results);
@@ -292,10 +283,9 @@ const Dashboard = () => {
         const hasDisease = m.disease || (m.supportedDiseases && m.supportedDiseases.length > 0);
         const hasCompany = m.company && m.company !== 'Unknown';
         const hasAudio = m.audioUrls || m.audiourls;
-        const hasCib = m.cibNo;
         const hasChemical = m.chemicalName;
 
-        return !hasName || !hasMarathi || !hasKeywords || !hasImages || !hasCrop || !hasDisease || !hasCompany || !hasAudio || !hasCib || !hasChemical;
+        return !hasName || !hasMarathi || !hasKeywords || !hasImages || !hasCrop || !hasDisease || !hasCompany || !hasAudio || !hasChemical;
     }).sort((a, b) => (a.name || a.medicineName || "").localeCompare(b.name || b.medicineName || ""));
 
     const term = incompleteSearchTerm.toLowerCase().trim();
@@ -387,6 +377,7 @@ const Dashboard = () => {
         </div>
       ),
       'database': <DatabaseManager files={storageFiles} loading={isStorageLoading} onRefresh={fetchStorageFiles} />,
+      'analytics': <AnalyticsPage />,
       'medicines': <MedicineTable medicines={filteredMedicines} searchTerm={searchTerm} setSearchTerm={setSearchTerm} onAdd={openAddForm} onEdit={openEditForm} onDelete={handleDeleteMedicine} onBulk={() => setActiveView('bulk-import')} />,
       'ads': <AdvertisementManager shops={shops} storageFiles={storageFiles} />,
       'bulk-import': <BulkMedicineImporter existingMedicines={medicines} onSaveAll={handleSaveBulkMedicines} onCancel={() => setActiveView('medicines')} />,
@@ -500,6 +491,7 @@ const Dashboard = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {!isSidebarCollapsed && <p style={{ fontSize: '12px', fontWeight: '700', color: COLORS.textMuted, padding: '0 12px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' }}>Menu</p>}
           <NavButton active={activeView === 'monitoring'} onClick={() => setActiveView('monitoring')} label="Monitoring" icon="fa-chart-line" isCollapsed={isSidebarCollapsed} />
+          <NavButton active={activeView === 'analytics'} onClick={() => setActiveView('analytics')} label="Analytics" icon="fa-chart-pie" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'onboarding'} onClick={() => setActiveView('onboarding')} label="Retail Partners" icon="fa-store" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'medicines'} onClick={() => setActiveView('medicines')} label="Medicine Catalog" icon="fa-pills" isCollapsed={isSidebarCollapsed} />
           <NavButton active={activeView === 'ads'} onClick={() => setActiveView('ads')} label="Ads & Promotions" icon="fa-tv" isCollapsed={isSidebarCollapsed} />
@@ -525,6 +517,7 @@ const Dashboard = () => {
           <div>
             <h2 style={{ margin: 0, fontSize: '28px', fontWeight: '800', color: COLORS.textMain, letterSpacing: '-0.5px' }}>
               {activeView === 'monitoring' && 'Kiosk Monitoring'}
+              {activeView === 'analytics' && 'Analytics & Trends'}
               {activeView === 'onboarding' && 'Retail Partners'}
               {activeView === 'medicines' && 'Medicine Catalog'}
               {activeView === 'bulk-import' && 'Bulk Medicine Import'}
@@ -581,6 +574,7 @@ const Dashboard = () => {
           }}>
               <MedicineForm
                   medicine={editingMedicine}
+                  medicines={medicines}
                   storageFiles={storageFiles}
                   onSave={handleSaveMedicine}
                   onCancel={() => {
