@@ -1,13 +1,9 @@
 package com.agrovision.kiosk.util;
 
-import android.os.SystemClock;
 import android.util.Log;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -56,8 +52,8 @@ public final class PerformanceProfiler {
         reset();
         currentScanId = scanIdGenerator.incrementAndGet();
         start("TOTAL LATENCY");
-        Log.d(TAG, "=========================================================");
-        Log.d(TAG, "SCAN #" + currentScanId + " STARTED");
+        safeLogD(TAG, "=========================================================");
+        safeLogD(TAG, "SCAN #" + currentScanId + " STARTED");
     }
 
     public static void lock() {
@@ -70,7 +66,7 @@ public final class PerformanceProfiler {
 
     public static void start(String sectionName) {
         if (!ENABLE_PROFILING) return;
-        startTimes.put(sectionName, SystemClock.elapsedRealtimeNanos());
+        startTimes.put(sectionName, System.nanoTime());
         logInfo(sectionName, "START");
     }
 
@@ -82,7 +78,7 @@ public final class PerformanceProfiler {
 
     public static void checkpoint(String sectionName, String detail) {
         if (!ENABLE_PROFILING) return;
-        long now = SystemClock.elapsedRealtimeNanos();
+        long now = System.nanoTime();
         Long start = startTimes.get(sectionName);
         if (start != null) {
             long elapsed = (now - start) / 1000000;
@@ -92,7 +88,7 @@ public final class PerformanceProfiler {
 
     public static void end(String sectionName) {
         if (!ENABLE_PROFILING) return;
-        long now = SystemClock.elapsedRealtimeNanos();
+        long now = System.nanoTime();
         Long start = startTimes.get(sectionName);
         if (start != null) {
             long durationMs = (now - start) / 1000000;
@@ -102,24 +98,28 @@ public final class PerformanceProfiler {
     }
 
     private static void logInfo(String sectionName, String event) {
-        String threadName = Thread.currentThread().getName();
-        String mainThreadSuffix = LooperUtils.isMainThread() ? " (MAIN)" : "";
-        
-        Runtime runtime = Runtime.getRuntime();
-        long usedMem = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024;
-        long maxMem = runtime.maxMemory() / 1024 / 1024;
+        try {
+            String threadName = Thread.currentThread().getName();
+            String mainThreadSuffix = LooperUtils.isMainThread() ? " (MAIN)" : "";
 
-        Log.d(TAG, String.format("SCAN #%d | %s | %s | Thread: %s%s | Mem: %dMB/%dMB",
-                currentScanId, sectionName, event, threadName, mainThreadSuffix, usedMem, maxMem));
+            Runtime runtime = Runtime.getRuntime();
+            long usedMem = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024;
+            long maxMem = runtime.maxMemory() / 1024 / 1024;
+
+            safeLogD(TAG, String.format("SCAN #%d | %s | %s | Thread: %s%s | Mem: %dMB/%dMB",
+                    currentScanId, sectionName, event, threadName, mainThreadSuffix, usedMem, maxMem));
+        } catch (Throwable ignored) {
+            // Unit test environment fallback
+        }
     }
 
     public static void printSummary() {
         if (!ENABLE_PROFILING) return;
         end("TOTAL LATENCY");
 
-        Log.d(TAG, "=========================================================");
-        Log.d(TAG, "YOLO MICRO PROFILE #" + currentScanId);
-        
+        safeLogD(TAG, "=========================================================");
+        safeLogD(TAG, "YOLO MICRO PROFILE #" + currentScanId);
+
         printStage("Frame Arrival", "Camera Frame");
         printStage("YUV -> RGB", "YUV -> RGB");
         printStage("Rotate", "Rotate Bitmap");
@@ -133,13 +133,13 @@ public final class PerformanceProfiler {
         printStage("NMS", "NMS");
         printStage("Overlay", "Overlay Draw");
 
-        Log.d(TAG, "------------------------------------");
+        safeLogD(TAG, "------------------------------------");
         Long total = durations.get("TOTAL LATENCY");
-        Log.d(TAG, "TOTAL: " + (total != null ? total : 0) + " ms");
-        Log.d(TAG, "=========================================================");
+        safeLogD(TAG, "TOTAL: " + (total != null ? total : 0) + " ms");
+        safeLogD(TAG, "=========================================================");
 
         // Analysis
-        Log.d(TAG, "ANALYSIS:");
+        safeLogD(TAG, "ANALYSIS:");
         String slowest = "";
         long maxTime = -1;
         for (Map.Entry<String, Long> entry : durations.entrySet()) {
@@ -149,12 +149,12 @@ public final class PerformanceProfiler {
                 slowest = entry.getKey();
             }
         }
-        Log.d(TAG, "1. Slowest stage: " + slowest + " (" + maxTime + " ms)");
-        
+        safeLogD(TAG, "1. Slowest stage: " + slowest + " (" + maxTime + " ms)");
+
         for (Map.Entry<String, Long> entry : durations.entrySet()) {
             Long target = TARGETS.get(entry.getKey());
             if (target != null && entry.getValue() > target) {
-                Log.w(TAG, "2. Stage '" + entry.getKey() + "' exceeds target! (" + entry.getValue() + " ms > " + target + " ms)");
+                safeLogW(TAG, "2. Stage '" + entry.getKey() + "' exceeds target! (" + entry.getValue() + " ms > " + target + " ms)");
             }
         }
     }
@@ -162,9 +162,9 @@ public final class PerformanceProfiler {
     private static void printStage(String label, String sectionName) {
         Long duration = durations.get(sectionName);
         if (duration != null) {
-            Log.d(TAG, String.format("%-20s %d ms", label, duration));
+            safeLogD(TAG, String.format("%-20s %d ms", label, duration));
         } else {
-            Log.d(TAG, String.format("%-20s N/A", label));
+            safeLogD(TAG, String.format("%-20s N/A", label));
         }
     }
 
@@ -174,10 +174,25 @@ public final class PerformanceProfiler {
         logs.clear();
     }
 
-    
+    private static void safeLogD(String tag, String msg) {
+        try {
+            Log.d(tag, msg);
+        } catch (Throwable ignored) {}
+    }
+
+    private static void safeLogW(String tag, String msg) {
+        try {
+            Log.w(tag, msg);
+        } catch (Throwable ignored) {}
+    }
+
     private static class LooperUtils {
         static boolean isMainThread() {
-            return android.os.Looper.myLooper() == android.os.Looper.getMainLooper();
+            try {
+                return android.os.Looper.myLooper() == android.os.Looper.getMainLooper();
+            } catch (Throwable ignored) {
+                return false;
+            }
         }
     }
 }

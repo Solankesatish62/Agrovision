@@ -1,305 +1,1023 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/home_root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#F8F9FA">
+    android:layout_height="match_parent">
 
-    <ImageButton
-        android:id="@+id/btnSettings"
-        android:layout_width="56dp"
-        android:layout_height="56dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginTop="24dp"
-        android:background="?attr/selectableItemBackgroundBorderless"
-        android:src="@android:drawable/ic_menu_manage"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:tint="#555555" />
+    <!-- Full Screen Background Image -->
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:src="@drawable/sunlit_green_fields_under_open_skies"
+        tools:src="@drawable/sunlit_green_fields_under_open_skies" />
 
-    <!-- =====================================================
-         TOP SECTION: Branding and Instructions
-         ===================================================== -->
+    <!-- Overlay Tint for Content Contrast -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#10000000" />
+
     <LinearLayout
-        android:id="@+id/topSection"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
         android:orientation="vertical"
-        android:gravity="center_horizontal"
-        android:layout_marginTop="32dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        android:padding="16dp">
 
-        <LinearLayout
-            android:id="@+id/brandingRow"
-            android:layout_width="wrap_content"
+        <!-- 1. TOP HEADER SECTION -->
+        <RelativeLayout
+            android:id="@+id/topHeader"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:layout_marginBottom="12dp">
 
-            <!-- AgroVision Logo Part -->
+            <!-- Left: AgroVision Logo & Marathi Tagline -->
             <LinearLayout
-                android:id="@+id/brandingContainer"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="bottom">
+                android:layout_alignParentStart="true"
+                android:layout_centerVertical="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Agro"
-                    android:textColor="@color/green"
-                    android:textSize="48sp"
-                    android:textStyle="bold"
-                    android:includeFontPadding="false" />
+                <!-- Plant Icon -->
+                <ImageView
+                    android:id="@+id/ivPlantLogo"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginEnd="10dp"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="AgroVision Logo"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/plant_icon" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Vision"
-                    android:textColor="@color/orange"
-                    android:textSize="48sp"
-                    android:textStyle="bold"
-                    android:includeFontPadding="false" />
-            </LinearLayout>
-
-            <!-- Separator -->
-            <View
-                android:id="@+id/brandingSeparator"
-                android:layout_width="2dp"
-                android:layout_height="40dp"
-                android:layout_marginHorizontal="24dp"
-                android:background="#DDDDDD"
-                android:visibility="gone"
-                tools:visibility="visible" />
-
-            <!-- Shop Branding Part -->
-            <FrameLayout
-                android:id="@+id/shopBrandingContainer"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:visibility="gone"
-                tools:visibility="visible">
-
-                <!-- Option 1: Styled Text -->
+                <!-- Logo Title & Subtitle Container -->
                 <LinearLayout
-                    android:id="@+id/shopTextBranding"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="bottom"
-                    android:visibility="gone"
-                    tools:visibility="visible">
+                    android:orientation="vertical">
 
                     <TextView
-                        android:id="@+id/tvShopName"
+                        android:id="@+id/tvLogoTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Krishi Seva Kendra"
-                        android:textColor="@color/green"
-                        android:textSize="48sp"
-                        android:textStyle="bold"
-                        android:includeFontPadding="false" />
+                        android:includeFontPadding="false"
+                        android:text="AgroVision"
+                        android:textColor="#111827"
+                        android:textSize="28sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvLogoSubtitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:includeFontPadding="false"
+                        android:text="Your Agri Knowledge Partner"
+                        android:textColor="#374151"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
                 </LinearLayout>
 
-                <!-- Option 2: Poster Image -->
-                <ImageView
-                    android:id="@+id/ivShopBrandingPoster"
-                    android:layout_width="wrap_content"
-                    android:layout_height="60dp"
-                    android:adjustViewBounds="true"
-                    android:scaleType="fitCenter"
-                    android:visibility="gone"
-                    tools:visibility="visible"
-                    tools:src="@drawable/logo_agrovision" />
+                <!-- Vertical Divider -->
+                <View
+                    android:layout_width="2dp"
+                    android:layout_height="38dp"
+                    android:layout_marginHorizontal="20dp"
+                    android:background="#334155" />
 
-            </FrameLayout>
+                <!-- Marathi Tagline -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingExtra="2dp"
+                    android:text="शेतकऱ्यांसाठी योग्य माहिती,\nयोग्य निर्णय, समृद्ध शेती."
+                    android:textColor="#0F172A"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Right: Settings Button -->
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_alignParentEnd="true"
+                android:layout_centerVertical="true"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Settings"
+                android:scaleType="fitCenter"
+                android:src="@drawable/settings" />
+        </RelativeLayout>
+
+        <!-- 2. MAIN MIDDLE CONTENT: Live Camera Card (Left) + 6 Info Cards Grid (Right) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
+
+            <!-- LEFT HALF: LIVE CAMERA PREVIEW CARD (~48% width) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cameraCard"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginEnd="12dp"
+                android:layout_weight="0.48"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="6dp"
+                app:strokeWidth="0dp">
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent">
+
+                    <!-- Live Camera Preview -->
+                    <androidx.camera.view.PreviewView
+                        android:id="@+id/cameraPreview"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        app:scaleType="fillCenter" />
+
+                    <!-- Bounding Box Overlay -->
+                    <com.agrovision.kiosk.ui.home.BoundingBoxOverlay
+                        android:id="@+id/overlayView"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent" />
+
+                    <!-- Overlay UI Controls on Camera Card -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="bottom"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <!-- Medicine Search Bar Card -->
+                        <com.google.android.material.card.MaterialCardView
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            app:cardBackgroundColor="#FFFFFF"
+                            app:cardCornerRadius="24dp"
+                            app:cardElevation="2dp">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal"
+                                android:paddingHorizontal="16dp">
+
+                                <ImageView
+                                    android:layout_width="20dp"
+                                    android:layout_height="20dp"
+                                    android:contentDescription="Search"
+                                    android:src="@android:drawable/ic_menu_search"
+                                    app:tint="#6B7280" />
+
+                                <AutoCompleteTextView
+                                    android:id="@+id/etSearchMedicine"
+                                    android:layout_width="0dp"
+                                    android:layout_height="match_parent"
+                                    android:layout_marginStart="10dp"
+                                    android:layout_weight="1"
+                                    android:background="@null"
+                                    android:completionThreshold="1"
+                                    android:hint="उत्पादनाचे नाव शोधा..."
+                                    android:imeOptions="actionSearch"
+                                    android:inputType="text"
+                                    android:textColor="#111827"
+                                    android:textColorHint="#9CA3AF"
+                                    android:textSize="15sp" />
+
+                                <ImageView
+                                    android:id="@+id/btnClearSearch"
+                                    android:layout_width="20dp"
+                                    android:layout_height="20dp"
+                                    android:contentDescription="Clear"
+                                    android:src="@android:drawable/ic_menu_close_clear_cancel"
+                                    android:visibility="gone"
+                                    app:tint="#9CA3AF" />
+                            </LinearLayout>
+                        </com.google.android.material.card.MaterialCardView>
+
+                    </LinearLayout>
+
+                </FrameLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- RIGHT HALF: 6 INFORMATION CARDS GRID (~52% width) -->
+            <GridLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="0.52"
+                android:columnCount="2"
+                android:rowCount="3"
+                android:useDefaultMargins="true">
+
+                <!-- CARD 1: पिकांची माहिती -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardCrops"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_rowWeight="1"
+                    android:layout_columnWeight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardBackgroundColor="#F0FDF4"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="2dp"
+                    app:strokeColor="#DCFCE7"
+                    app:strokeWidth="1dp">
+
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:padding="12dp">
+
+                        <ImageView
+                            android:id="@+id/ivIconCrop"
+                            android:layout_width="60dp"
+                            android:layout_height="60dp"
+                            android:layout_alignParentStart="true"
+                            android:layout_centerVertical="true"
+                            android:adjustViewBounds="true"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/plant_icon"
+                            tools:src="@drawable/plant_icon" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="10dp"
+                            android:layout_toStartOf="@id/ivArrow1"
+                            android:layout_toEndOf="@id/ivIconCrop"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="पिकांची माहिती"
+                                android:textColor="#14532D"
+                                android:textSize="22sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="पिकानुसार मार्गदर्शन,\nलागवड ते काढणी"
+                                android:textColor="#166534"
+                                android:textSize="15sp" />
+                        </LinearLayout>
+
+                        <ImageView
+                            android:id="@+id/ivArrow1"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_alignParentEnd="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/right_arrow_in_black_circular_button"
+                            app:tint="#15803D" />
+                    </RelativeLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- CARD 2: कीड व रोग माहिती -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardPests"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_rowWeight="1"
+                    android:layout_columnWeight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardBackgroundColor="#FEF2F2"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="2dp"
+                    app:strokeColor="#FEE2E2"
+                    app:strokeWidth="1dp">
+
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:padding="12dp">
+
+                        <ImageView
+                            android:id="@+id/ivIconPest"
+                            android:layout_width="60dp"
+                            android:layout_height="60dp"
+                            android:layout_alignParentStart="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/ladybug"
+                            tools:src="@drawable/ladybug" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="10dp"
+                            android:layout_toStartOf="@id/ivArrow2"
+                            android:layout_toEndOf="@id/ivIconPest"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="कीड व रोग माहिती"
+                                android:textColor="#7F1D1D"
+                                android:textSize="22sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="लक्षणे, उपाय आणि\nयोग्य उत्पादने"
+                                android:textColor="#991B1B"
+                                android:textSize="15sp" />
+                        </LinearLayout>
+
+                        <ImageView
+                            android:id="@+id/ivArrow2"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_alignParentEnd="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/right_arrow_in_black_circular_button"
+                            app:tint="#B91C1C" />
+                    </RelativeLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- CARD 3: खते व औषधे -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardFertilizers"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_rowWeight="1"
+                    android:layout_columnWeight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardBackgroundColor="#F0F9FF"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="2dp"
+                    app:strokeColor="#E0F2FE"
+                    app:strokeWidth="1dp">
+
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:padding="12dp">
+
+                        <ImageView
+                            android:id="@+id/ivIconFertilizer"
+                            android:layout_width="60dp"
+                            android:layout_height="60dp"
+                            android:layout_alignParentStart="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/pesticide"
+                            tools:src="@drawable/pesticide" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="10dp"
+                            android:layout_toStartOf="@id/ivArrow3"
+                            android:layout_toEndOf="@id/ivIconFertilizer"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="खते व औषधे"
+                                android:textColor="#0C4A6E"
+                                android:textSize="22sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="उत्पादन माहिती,\nवापर पद्धती, मात्रा"
+                                android:textColor="#075985"
+                                android:textSize="15sp" />
+                        </LinearLayout>
+
+                        <ImageView
+                            android:id="@+id/ivArrow3"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_alignParentEnd="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/right_arrow_in_black_circular_button"
+                            app:tint="#0284C7" />
+                    </RelativeLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- CARD 4: हवामान व सल्ला -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardWeather"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_rowWeight="1"
+                    android:layout_columnWeight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardBackgroundColor="#FFFBEB"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="2dp"
+                    app:strokeColor="#FEF3C7"
+                    app:strokeWidth="1dp">
+
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:padding="12dp">
+
+                        <ImageView
+                            android:id="@+id/ivIconWeather"
+                            android:layout_width="60dp"
+                            android:layout_height="60dp"
+                            android:layout_alignParentStart="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/weather"
+                            tools:src="@drawable/weather" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="10dp"
+                            android:layout_toStartOf="@id/ivArrow4"
+                            android:layout_toEndOf="@id/ivIconWeather"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="हवामान व सल्ला"
+                                android:textColor="#78350F"
+                                android:textSize="22sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="आजचे हवामान,\nशेती सल्ला"
+                                android:textColor="#92400E"
+                                android:textSize="15sp" />
+                        </LinearLayout>
+
+                        <ImageView
+                            android:id="@+id/ivArrow4"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_alignParentEnd="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/right_arrow_in_black_circular_button"
+                            app:tint="#D97706" />
+                    </RelativeLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- CARD 5: उत्पादन उपलब्धता -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardAvailability"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_rowWeight="1"
+                    android:layout_columnWeight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardBackgroundColor="#FAF5FF"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="2dp"
+                    app:strokeColor="#F3E8FF"
+                    app:strokeWidth="1dp">
+
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:padding="12dp">
+
+                        <ImageView
+                            android:id="@+id/ivIconCart"
+                            android:layout_width="60dp"
+                            android:layout_height="60dp"
+                            android:layout_alignParentStart="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/shopping_cart"
+                            tools:src="@drawable/shopping_cart" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="10dp"
+                            android:layout_toStartOf="@id/ivArrow5"
+                            android:layout_toEndOf="@id/ivIconCart"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="उत्पादन उपलब्धता"
+                                android:textColor="#581C87"
+                                android:textSize="22sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="स्टॉक, पर्यायी उत्पादने,\nऑर्डर करण्यासाठी विचार"
+                                android:textColor="#6B21A8"
+                                android:textSize="15sp" />
+                        </LinearLayout>
+
+                        <ImageView
+                            android:id="@+id/ivArrow5"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_alignParentEnd="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/right_arrow_in_black_circular_button"
+                            app:tint="#9333EA" />
+                    </RelativeLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- CARD 6: शेती ज्ञान केंद्र -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardKnowledge"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_rowWeight="1"
+                    android:layout_columnWeight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardBackgroundColor="#F0FDF4"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="2dp"
+                    app:strokeColor="#DCFCE7"
+                    app:strokeWidth="1dp">
+
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:padding="12dp">
+
+                        <ImageView
+                            android:id="@+id/ivIconBook"
+                            android:layout_width="60dp"
+                            android:layout_height="60dp"
+                            android:layout_alignParentStart="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/open_book"
+                            tools:src="@drawable/open_book" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="10dp"
+                            android:layout_toStartOf="@id/ivArrow6"
+                            android:layout_toEndOf="@id/ivIconBook"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="शेती ज्ञान केंद्र"
+                                android:textColor="#064E3B"
+                                android:textSize="22sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="व्हिडिओ, लेख, मार्गदर्शक"
+                                android:textColor="#065F46"
+                                android:textSize="15sp" />
+                        </LinearLayout>
+
+                        <ImageView
+                            android:id="@+id/ivArrow6"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_alignParentEnd="true"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/right_arrow_in_black_circular_button"
+                            app:tint="#059669" />
+                    </RelativeLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+            </GridLayout>
 
         </LinearLayout>
 
-        <ImageView
-            android:id="@+id/ivLogoCurve"
-            android:layout_width="match_parent"
-            android:layout_height="12dp"
-            android:layout_marginTop="4dp"
-            android:scaleType="fitXY"
-            android:src="@drawable/agro_curve" />
-
-    </LinearLayout>
-
-    <!-- =====================================================
-         MIDDLE SECTION: Camera Preview (Main Focus)
-         ===================================================== -->
-    <com.google.android.material.card.MaterialCardView
-        android:id="@+id/cameraCard"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_marginTop="32dp"
-        app:cardCornerRadius="24dp"
-        app:cardElevation="12dp"
-        app:strokeWidth="0dp"
-        app:layout_constraintDimensionRatio="16:9"
-        app:layout_constraintTop_toBottomOf="@id/topSection"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintWidth_percent="0.55">
-
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="match_parent">
-
-            <androidx.camera.view.PreviewView
-                android:id="@+id/cameraPreview"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="#1A1A1A"
-                app:scaleType="fillCenter" />
-
-            <com.agrovision.kiosk.ui.home.BoundingBoxOverlay
-                android:id="@+id/overlayView"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
-        </FrameLayout>
-
-    </com.google.android.material.card.MaterialCardView>
-
-    <!-- =====================================================
-         INSTRUCTION SECTION: Main Guidance
-         ===================================================== -->
-    <LinearLayout
-        android:id="@+id/instructionContainer"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:gravity="center_horizontal"
-        android:layout_marginTop="32dp"
-        app:layout_constraintTop_toBottomOf="@id/cameraCard"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <TextView
-            android:id="@+id/tvSubtitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="औषधी समोर ठेवा"
-            android:textColor="#2E7D32"
-            android:textSize="48sp"
-            android:textStyle="bold"
-            android:letterSpacing="0.02" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="स्कॅन करण्यासाठी औषधाची बाटली समोर ठेवा"
-            android:textColor="#757575"
-            android:textSize="18sp"
-            android:layout_marginTop="4dp" />
-    </LinearLayout>
-
-    <!-- =====================================================
-         SEARCH SECTION: Manual Medicine Search (Directly Below Marathi Heading)
-         ===================================================== -->
-    <com.google.android.material.card.MaterialCardView
-        android:id="@+id/searchCard"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        app:cardCornerRadius="16dp"
-        app:cardElevation="4dp"
-        app:strokeWidth="1dp"
-        app:strokeColor="#E0E0E0"
-        app:layout_constraintTop_toBottomOf="@id/instructionContainer"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintWidth_percent="0.5">
-
+        <!-- 3. LOWER BANNER SECTION -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingHorizontal="20dp"
-            android:paddingVertical="4dp">
+            android:layout_marginTop="12dp"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
 
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@android:drawable/ic_menu_search"
-                app:tint="@color/green" />
-
-            <AutoCompleteTextView
-                android:id="@+id/etSearchMedicine"
+            <!-- PROMOTIONAL BANNER CARD (~75% width) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardPromoBanner"
                 android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_marginStart="12dp"
-                android:layout_weight="1"
-                android:background="@null"
-                android:hint="औषधाचे नाव येथे टाईप करा (Type Medicine Name Here)"
-                android:imeOptions="actionSearch"
-                android:inputType="text"
-                android:textColor="@color/green"
-                android:textColorHint="#9E9E9E"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:completionThreshold="1" />
+                android:layout_height="105dp"
+                android:layout_marginEnd="12dp"
+                android:layout_weight="0.75"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="4dp"
+                app:strokeColor="#FFFFFF"
+                app:strokeWidth="3.5dp">
 
-            <ImageView
-                android:id="@+id/btnClearSearch"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_marginStart="8dp"
-                android:src="@android:drawable/ic_menu_close_clear_cancel"
-                android:visibility="gone"
-                app:tint="#9E9E9E"
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent">
+
+                    <ImageView
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/sunlit_seedling_and_agricultural_bottles"
+                        tools:src="@drawable/sunlit_seedling_and_agricultural_bottles" />
+
+                    <!-- Dark semi-transparent gradient overlay for promo text contrast -->
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="#30000000" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="24dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:gravity="center"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:gravity="center"
+                                android:shadowColor="#CC000000"
+                                android:shadowDx="1"
+                                android:shadowDy="1"
+                                android:shadowRadius="4"
+                                android:text="चांगले पीक,\nचांगले उद्याचे भविष्य"
+                                android:textColor="#FFFFFF"
+                                android:textSize="20sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:gravity="center"
+                                android:shadowColor="#CC000000"
+                                android:shadowDx="1"
+                                android:shadowDy="1"
+                                android:shadowRadius="3"
+                                android:text="विश्वसनीय उत्पादने, शाश्वत शेती"
+                                android:textColor="#F3F4F6"
+                                android:textSize="14sp" />
+                        </LinearLayout>
+
+                        <!-- "आमची उत्पादने पहा →" Button -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnShowOurProducts"
+                            android:layout_width="wrap_content"
+                            android:layout_height="48dp"
+                            android:text="आमची उत्पादने पहा  →"
+                            android:textSize="15sp"
+                            android:textStyle="bold"
+                            app:backgroundTint="#059669"
+                            app:cornerRadius="24dp" />
+                    </LinearLayout>
+                </FrameLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- DIGITAL HELP CARD (~25% width) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardDigitalHelp"
+                android:layout_width="0dp"
+                android:layout_height="105dp"
+                android:layout_weight="0.25"
                 android:clickable="true"
                 android:focusable="true"
-                android:background="?attr/selectableItemBackgroundBorderless" />
+                app:cardBackgroundColor="#ECFDF5"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="4dp"
+                app:strokeColor="#A7F3D0"
+                app:strokeWidth="1dp">
+
+                <RelativeLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="12dp">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_alignParentStart="true"
+                        android:layout_centerVertical="true"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="शेतकऱ्यांसाठी\nडिजिटल मदत"
+                            android:textColor="#064E3B"
+                            android:textSize="17sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="तंत्रज्ञानाच्या सहाय्याने\nसमृद्ध शेती"
+                            android:textColor="#047857"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:id="@+id/ivArrowDigitalHelp"
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:layout_alignParentEnd="true"
+                        android:layout_centerVertical="true"
+                        android:src="@drawable/right_arrow_in_black_circular_button"
+                        app:tint="#059669" />
+                </RelativeLayout>
+            </com.google.android.material.card.MaterialCardView>
+
         </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
 
-    <!-- =====================================================
-         DAILY SCAN COUNT: Bottom Left Corner
-         ===================================================== -->
-    <TextView
-        android:id="@+id/tvDailyScanCount"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="32dp"
-        android:layout_marginBottom="32dp"
-        android:background="@drawable/bg_search"
-        android:elevation="4dp"
-        android:paddingHorizontal="20dp"
-        android:paddingVertical="12dp"
-        android:text="आजचे स्कॅन: 0"
-        android:textColor="#27AE60"
-        android:textSize="18sp"
-        android:textStyle="bold"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+        <!-- 4. BOTTOM NAVIGATION BAR -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="12dp"
+            app:cardBackgroundColor="#012E27"
+            app:cardCornerRadius="14dp"
+            app:cardElevation="4dp"
+            app:strokeWidth="0dp">
 
-    <!-- =====================================================
-         SCANNER PROGRESS: Shown during Web Scraping
-         ===================================================== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="12dp">
+
+                <!-- Selected Item: Home Button (White Pill) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/navHome"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardBackgroundColor="#FFFFFF"
+                    app:cardCornerRadius="18dp"
+                    app:cardElevation="0dp"
+                    app:strokeWidth="0dp">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="7dp">
+
+                        <ImageView
+                            android:layout_width="20dp"
+                            android:layout_height="20dp"
+                            android:contentDescription="Home"
+                            android:src="@drawable/ic_nav_home"
+                            app:tint="#012E27" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="होम"
+                            android:textColor="#012E27"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Nav Item: Recent Searches -->
+                <LinearLayout
+                    android:id="@+id/navRecent"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Recent"
+                        android:src="@drawable/ic_nav_recent"
+                        app:tint="#E2E8F0" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="अलीकडील शोध"
+                        android:textColor="#E2E8F0"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:background="#20FFFFFF" />
+
+                <!-- Nav Item: Favourites -->
+                <LinearLayout
+                    android:id="@+id/navFavorites"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Favorites"
+                        android:src="@drawable/ic_nav_star"
+                        app:tint="#E2E8F0" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="आवडती उत्पादने"
+                        android:textColor="#E2E8F0"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:background="#20FFFFFF" />
+
+                <!-- Nav Item: Bills / Transactions -->
+                <LinearLayout
+                    android:id="@+id/navBills"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Bills"
+                        android:src="@drawable/ic_nav_bills"
+                        app:tint="#E2E8F0" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="माझी बिले / व्यवहार"
+                        android:textColor="#E2E8F0"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:background="#20FFFFFF" />
+
+                <!-- Nav Item: Help -->
+                <LinearLayout
+                    android:id="@+id/navHelp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Help"
+                        android:src="@drawable/ic_nav_help"
+                        app:tint="#E2E8F0" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="मदत"
+                        android:textColor="#E2E8F0"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:background="#20FFFFFF" />
+
+                <!-- Nav Item: Technical Support -->
+                <LinearLayout
+                    android:id="@+id/navSupport"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Support"
+                        android:src="@drawable/ic_nav_support"
+                        app:tint="#E2E8F0" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="तांत्रिक सहाय्य"
+                        android:textColor="#E2E8F0"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <!-- Spacer -->
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <!-- Vertical Divider before Date & Time -->
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="24dp"
+                    android:layout_marginEnd="16dp"
+                    android:background="#30FFFFFF" />
+
+                <!-- Right Side: Live Date & Time -->
+                <TextView
+                    android:id="@+id/tvNavDateTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FFFFFF"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    tools:text="सोम, 14 जुलै 2025 10:24 AM" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+    </LinearLayout>
+
+    <!-- Scanner Progress Spinner Overlay (Shown during web scraping / identification) -->
     <LinearLayout
         android:id="@+id/progressScanner"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:gravity="center"
+        android:layout_gravity="center"
         android:background="@drawable/bg_search"
-        android:padding="24dp"
         android:elevation="20dp"
-        android:visibility="gone"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:visibility="gone">
 
         <ProgressBar
             android:layout_width="64dp"
@@ -323,4 +1041,4 @@
             android:textSize="16sp" />
     </LinearLayout>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+</FrameLayout>

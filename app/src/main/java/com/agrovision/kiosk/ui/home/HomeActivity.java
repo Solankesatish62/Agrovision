@@ -512,6 +512,7 @@ public final class HomeActivity extends AppCompatActivity
         
         // Setup CameraController
         cameraController = CameraController.getInstance(getApplicationContext());
+        cameraController.setScanMode(com.agrovision.kiosk.camera.ScanMode.CENTER_ROI);
         cameraController.setScanResultCallback(this);
         cameraController.setOverlayView(overlayView);
 
@@ -693,6 +694,11 @@ public final class HomeActivity extends AppCompatActivity
 
     @Override
     public void onScanCompleted(List<String> normalizedTexts) {
+        onScanCompleted(normalizedTexts, null);
+    }
+
+    @Override
+    public void onScanCompleted(List<String> normalizedTexts, com.agrovision.kiosk.camera.ScanMetrics metrics) {
         PerformanceProfiler.start("HomeActivity.onScanCompleted");
         Log.d("PIPELINE_TRACE", "8. onScanCompleted triggered in HomeActivity.");
 
@@ -715,7 +721,7 @@ public final class HomeActivity extends AppCompatActivity
         // 🚀 PERFORM HEAVY RESOLUTION ON BACKGROUND THREAD
         MatchingExecutor.submit(() -> {
             Log.d("PIPELINE_TRACE", "9. Resolving medicines on background thread...");
-            List<ScanResult> results = pipeline.resolve(normalizedTexts);
+            List<ScanResult> results = pipeline.resolve(normalizedTexts, metrics);
 
             if (results != null && !results.isEmpty()) {
                 runOnUiThread(() -> {
@@ -728,6 +734,19 @@ public final class HomeActivity extends AppCompatActivity
                         if (r.resultType == ResultType.KNOWN) {
                             knownResults.add(r);
                         }
+                    }
+
+                    if (metrics != null) {
+                        metrics.totalMs = android.os.SystemClock.elapsedRealtime() - metrics.scanStartMs;
+                        if (!knownResults.isEmpty()) {
+                            metrics.success = true;
+                            metrics.matchedMedicineName = knownResults.get(0).displayName;
+                        } else {
+                            metrics.success = false;
+                        }
+                        String report = metrics.formatLog();
+                        Log.i("SCAN_ANALYTICS", report);
+                        Log.i("CENTER_ROI_SCAN", report);
                     }
 
                     if (knownResults.isEmpty()) {
@@ -763,13 +782,20 @@ public final class HomeActivity extends AppCompatActivity
                     });
 
                     Log.i("PIPELINE_TRACE", "10. Launching Result screen with " + knownResults.size() + " items.");
-                    
+
                     incrementScanCount(knownResults);
-                    
+
                     PerformanceProfiler.end("HomeActivity.onScanCompleted");
                     launchResultScreen(knownResults);
                 });
             } else {
+                if (metrics != null) {
+                    metrics.totalMs = android.os.SystemClock.elapsedRealtime() - metrics.scanStartMs;
+                    metrics.success = false;
+                    String report = metrics.formatLog();
+                    Log.i("SCAN_ANALYTICS", report);
+                    Log.i("CENTER_ROI_SCAN", report);
+                }
                 LogUtils.w("No scan results produced");
                 synchronized (this) {
                     isScanLocked = false;

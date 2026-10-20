@@ -4,7 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
+import android.os.SystemClock;
 
 import androidx.annotation.NonNull;
 
@@ -17,14 +17,18 @@ import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
 public final class OcrProcessor {
 
     private final TextRecognizer recognizer;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
+    @FunctionalInterface
     public interface Callback {
+        void onResult(@NonNull String normalizedText, long normDurationMs);
+    }
+
+    @FunctionalInterface
+    public interface SimpleCallback {
         void onResult(@NonNull String normalizedText);
     }
 
@@ -34,10 +38,6 @@ public final class OcrProcessor {
         );
     }
 
-    /**
-     * 🚀 Optimization 4: Public check to see if OCR is busy.
-     * Removed for Phase 1 (Parallel OCR) to allow multiple simultaneous boxes.
-     */
     public boolean isBusy() {
         return false;
     }
@@ -54,28 +54,34 @@ public final class OcrProcessor {
                         PerformanceProfiler.checkpoint("OCR", "OCR Callback Received");
                         PerformanceProfiler.log("OCR", "Recognized Characters: " + (result != null ? result.getText().length() : 0));
                         String rawText = extractText(result);
-                        
+
+                        long normStart = SystemClock.elapsedRealtime();
                         PerformanceProfiler.start("OCR Cleaning");
                         PerformanceProfiler.start("Text Normalization");
                         String cleaned = TextCleaner.clean(rawText);
                         String normalized = TextNormalizer.normalize(cleaned);
                         PerformanceProfiler.end("Text Normalization");
                         PerformanceProfiler.end("OCR Cleaning");
+                        long normDurationMs = SystemClock.elapsedRealtime() - normStart;
 
                         PerformanceProfiler.end("OCR");
-                        callback.onResult(normalized);
+                        callback.onResult(normalized, normDurationMs);
                     })
                     .addOnFailureListener(RecognitionExecutor.get(), e -> {
                         LogUtils.e("OCR Process failed", e);
                         PerformanceProfiler.end("OCR");
-                        callback.onResult("");
+                        callback.onResult("", 0L);
                     });
 
         } catch (Exception e) {
             LogUtils.e("OCR Exception", e);
             PerformanceProfiler.end("OCR");
-            mainHandler.post(() -> callback.onResult(""));
+            mainHandler.post(() -> callback.onResult("", 0L));
         }
+    }
+
+    public void process(@NonNull Bitmap bitmap, @NonNull SimpleCallback callback) {
+        process(bitmap, (normalizedText, normDurationMs) -> callback.onResult(normalizedText));
     }
 
     private String extractText(Text text) {

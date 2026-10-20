@@ -127,6 +127,19 @@ public final class RecognitionPipelineOrchestrator {
     }
 
     /**
+     * Resolves OCR strings into ScanResults with ScanMetrics profiling.
+     * 100% Offline Matching.
+     */
+    public List<ScanResult> resolve(List<String> normalizedTexts, com.agrovision.kiosk.camera.ScanMetrics metrics) {
+        long matchStartMs = android.os.SystemClock.elapsedRealtime();
+        List<ScanResult> results = resolve(normalizedTexts);
+        if (metrics != null) {
+            metrics.matchingMs = android.os.SystemClock.elapsedRealtime() - matchStartMs;
+        }
+        return results;
+    }
+
+    /**
      * Resolves OCR strings into ScanResults.
      * 100% Offline Matching.
      */

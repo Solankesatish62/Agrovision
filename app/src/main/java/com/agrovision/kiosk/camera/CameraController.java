@@ -2,7 +2,9 @@ package com.agrovision.kiosk.camera;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.graphics.RectF;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Display;
 import android.view.Surface;
@@ -41,13 +43,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * CameraController
  *
  * SINGLE OWNER of CameraX + vision pipeline.
  * Synchronizes rotation with display for upright preview and processing.
- * Optimized for 1-2 second end-to-end latency.
+ * Optimized for Center ROI scanning without YOLO inference.
  */
 public final class CameraController {
 
@@ -73,10 +76,15 @@ public final class CameraController {
 
     private final FrameAnalyzer frameAnalyzer;
 
+    // Mode Boundary & YOLO tracking
+    private volatile ScanMode scanMode = ScanMode.CENTER_ROI;
+    private final AtomicInteger yoloInferenceCount = new AtomicInteger(0);
+    private final AtomicLong scanAttemptCounter = new AtomicLong(0);
+
     // UI Overlay
     private BoundingBoxOverlay overlayView;
 
-    // 🚀 Multi-object detection fields
+    // Multi-object detection fields
     private final AtomicBoolean isProcessingQueue = new AtomicBoolean(false);
     private final AtomicBoolean isDetectionEnabled = new AtomicBoolean(true);
     private final Queue<DetectionResult> pendingDetections = new LinkedList<>();
@@ -118,16 +126,39 @@ public final class CameraController {
         );
     }
 
+    public void setScanMode(ScanMode mode) {
+        this.scanMode = mode;
+        if (overlayView != null) {
+            overlayView.setScanMode(mode);
+        }
+        Log.i("CENTER_ROI_SCAN", "Scan mode set to: " + mode);
+    }
+
+    public ScanMode getScanMode() {
+        return scanMode;
+    }
+
+    public int getYoloInferenceCount() {
+        return yoloInferenceCount.get();
+    }
+
+    public void resetYoloInferenceCount() {
+        yoloInferenceCount.set(0);
+    }
+
     public void setScanResultCallback(ScanResultCallback callback) {
         this.scanResultCallback = callback;
     }
 
     public void setOverlayView(BoundingBoxOverlay overlayView) {
         this.overlayView = overlayView;
+        if (overlayView != null) {
+            overlayView.setScanMode(scanMode);
+        }
     }
 
     /**
-     * 🚀 ENABLE/DISABLE DETECTION
+     * ENABLE/DISABLE DETECTION
      * Completely pauses the vision pipeline (YOLO + OCR).
      */
     public void setDetectionEnabled(boolean enabled) {
@@ -147,7 +178,7 @@ public final class CameraController {
     }
 
     /**
-     * 🚀 RESET PIPELINE
+     * RESET PIPELINE
      * Clears all pending detections and resets the processing lock.
      * Should be called when scanning starts/resumes to prevent deadlocks.
      */
@@ -169,7 +200,7 @@ public final class CameraController {
      * Creates a CameraSelector based on configuration.
      * Falls back to any available camera if the configured lens facing is not available.
      */
-    @androidx.annotation.OptIn(markerClass = androidx.camera.core.ExperimentalLensFacing.class)
+    @OptIn(markerClass = ExperimentalLensFacing.class)
     private CameraSelector createCameraSelector() {
         if (cameraProvider == null) return CameraSelector.DEFAULT_BACK_CAMERA;
 
@@ -214,7 +245,7 @@ public final class CameraController {
 
     private long lastProcessTime = 0;
     private long lastPreviewFrameTime = 0;
-    private static final long PROCESS_THROTTLE_MS = 200; // 🚀 Increased to 200ms to prevent GC-related crashes on low-end hardware.
+    private static final long PROCESS_THROTTLE_MS = 200; // Throttle to prevent GC churn
 
     private void handleFrame(@NonNull ImageProxy image) {
         lastPreviewFrameTime = System.currentTimeMillis();
@@ -223,12 +254,209 @@ public final class CameraController {
             return;
         }
 
+        if (scanMode == ScanMode.CENTER_ROI) {
+            processCenterRoiFrame(image);
+        } else {
+            processLegacyYoloFrame(image);
+        }
+    }
+
+    private void processCenterRoiFrame(@NonNull ImageProxy image) {
+        long frameArrivalMs = SystemClock.elapsedRealtime();
+        long scanAttemptId = scanAttemptCounter.incrementAndGet();
+        String attemptTag = "scan_" + frameArrivalMs + "_" + scanAttemptId;
+
+        ScanMetrics metrics = new ScanMetrics(attemptTag, frameArrivalMs);
+
         if (isProcessingQueue.get()) {
             image.close();
             return;
         }
 
-        // 🚀 STAGE 1 & 2: Frame Arrival & Acquire ImageProxy
+        long now = System.currentTimeMillis();
+        if (now - lastProcessTime < PROCESS_THROTTLE_MS) {
+            image.close();
+            return;
+        }
+        lastProcessTime = now;
+
+        if (!isProcessingQueue.compareAndSet(false, true)) {
+            image.close();
+            return;
+        }
+
+        Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] ROI mode activated");
+        Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] YOLO skipped because ROI mode is active");
+        Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] ImageAnalysis frame received: " + image.getWidth() + "x" + image.getHeight() + ", rotation: " + image.getImageInfo().getRotationDegrees());
+
+        long convStart = SystemClock.elapsedRealtime();
+        Bitmap fullBitmap = null;
+        try {
+            fullBitmap = ImageUtils.toBitmap(image);
+        } catch (Exception e) {
+            LogUtils.e("Failed to convert image proxy to bitmap in ROI mode", e);
+        } finally {
+            image.close(); // CRITICAL: Close ImageProxy immediately
+        }
+
+        metrics.conversionMs = SystemClock.elapsedRealtime() - convStart;
+
+        if (fullBitmap == null) {
+            isProcessingQueue.set(false);
+            Log.w("CENTER_ROI_SCAN", "[" + attemptTag + "] Image Proxy to Bitmap conversion failed");
+            return;
+        }
+
+        // 1. Calculate Center ROI coordinates mapped to bitmap space
+        long roiStartMs = SystemClock.elapsedRealtime();
+        Rect cropRect = calculateCenterRoiCropRect(fullBitmap);
+        metrics.roiCalcMs = SystemClock.elapsedRealtime() - roiStartMs;
+        Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] ROI coordinates calculated: " + cropRect + " in " + metrics.roiCalcMs + " ms");
+
+        // 2. Crop Center ROI
+        long cropStartMs = SystemClock.elapsedRealtime();
+        Bitmap roiBitmap = BitmapUtils.safeCrop(fullBitmap, cropRect);
+        BitmapUtils.safeRecycle(fullBitmap);
+        metrics.cropMs = SystemClock.elapsedRealtime() - cropStartMs;
+
+        if (roiBitmap == null) {
+            isProcessingQueue.set(false);
+            Log.w("CENTER_ROI_SCAN", "[" + attemptTag + "] ROI crop creation failed");
+            return;
+        }
+
+        Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] ROI crop created: " + roiBitmap.getWidth() + "x" + roiBitmap.getHeight() + " in " + metrics.cropMs + " ms");
+
+        // 3. Image-quality check
+        long qualityStartMs = SystemClock.elapsedRealtime();
+        boolean qualityPass = checkImageQuality(roiBitmap);
+        metrics.qualityCheckMs = SystemClock.elapsedRealtime() - qualityStartMs;
+        Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] Image-quality check completed: " + (qualityPass ? "PASSED" : "FAILED") + " in " + metrics.qualityCheckMs + " ms");
+
+        if (!qualityPass) {
+            BitmapUtils.safeRecycle(roiBitmap);
+            isProcessingQueue.set(false);
+            Log.w("CENTER_ROI_SCAN", "[" + attemptTag + "] Candidate rejected: low image quality / blur / darkness");
+            return;
+        }
+
+        // 4. Downscale for OCR performance
+        Bitmap ocrInput = BitmapUtils.scaleToWidth(roiBitmap, 640);
+        if (ocrInput != roiBitmap) {
+            BitmapUtils.safeRecycle(roiBitmap);
+        }
+
+        // 5. OCR Execution
+        long ocrStartMs = SystemClock.elapsedRealtime();
+        Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] OCR started");
+
+        ocrProcessor.process(ocrInput, (normalizedText, normDurationMs) -> {
+            metrics.ocrMs = SystemClock.elapsedRealtime() - ocrStartMs;
+            metrics.normMs = normDurationMs;
+
+            Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] OCR completed in " + metrics.ocrMs + " ms. Text length: " + (normalizedText != null ? normalizedText.length() : 0));
+            BitmapUtils.safeRecycle(ocrInput);
+
+            if (normalizedText == null || normalizedText.trim().isEmpty()) {
+                Log.w("CENTER_ROI_SCAN", "[" + attemptTag + "] OCR empty/error: no text recognized");
+                isProcessingQueue.set(false);
+                return;
+            }
+
+            Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] Normalization completed in " + normDurationMs + " ms: [" + normalizedText + "]");
+
+            if (scanDebouncer.shouldProcess(normalizedText) && !processedResults.contains(normalizedText)) {
+                processedResults.add(normalizedText);
+
+                Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] Medicine matching started for: [" + normalizedText + "]");
+
+                if (scanResultCallback != null) {
+                    Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] Candidate accepted, notifying callback with metrics");
+                    scanResultCallback.onScanCompleted(Collections.singletonList(normalizedText), metrics);
+                } else {
+                    Log.w("CENTER_ROI_SCAN", "[" + attemptTag + "] No candidate callback registered");
+                }
+            } else {
+                Log.i("CENTER_ROI_SCAN", "[" + attemptTag + "] Candidate rejected: duplicate or debounced text");
+            }
+
+            isProcessingQueue.set(false);
+        });
+    }
+
+    public Rect calculateCenterRoiCropRect(Bitmap fullBitmap) {
+        int bitmapW = fullBitmap.getWidth();
+        int bitmapH = fullBitmap.getHeight();
+
+        if (overlayView != null && overlayView.getWidth() > 0 && overlayView.getHeight() > 0) {
+            float viewW = overlayView.getWidth();
+            float viewH = overlayView.getHeight();
+
+            RectF viewRoi = overlayView.getCenterRoiRectInView();
+
+            float scale = Math.max(viewW / (float) bitmapW, viewH / (float) bitmapH);
+            float scaledW = bitmapW * scale;
+            float scaledH = bitmapH * scale;
+
+            float offsetX = (scaledW - viewW) / 2f;
+            float offsetY = (scaledH - viewH) / 2f;
+
+            float bmpLeft = (viewRoi.left + offsetX) / scale;
+            float bmpTop = (viewRoi.top + offsetY) / scale;
+            float bmpRight = (viewRoi.right + offsetX) / scale;
+            float bmpBottom = (viewRoi.bottom + offsetY) / scale;
+
+            int left = (int) Math.max(0, Math.min(bitmapW - 32, bmpLeft));
+            int top = (int) Math.max(0, Math.min(bitmapH - 32, bmpTop));
+            int right = (int) Math.max(left + 32, Math.min(bitmapW, bmpRight));
+            int bottom = (int) Math.max(top + 32, Math.min(bitmapH, bmpBottom));
+
+            return new Rect(left, top, right, bottom);
+        } else {
+            // Fallback: Center 60% x 60% of bitmap
+            int left = (int) (bitmapW * 0.20f);
+            int top = (int) (bitmapH * 0.20f);
+            int right = (int) (bitmapW * 0.80f);
+            int bottom = (int) (bitmapH * 0.80f);
+            return new Rect(left, top, right, bottom);
+        }
+    }
+
+    public boolean checkImageQuality(Bitmap bitmap) {
+        if (bitmap == null || bitmap.isRecycled() || bitmap.getWidth() < 32 || bitmap.getHeight() < 32) {
+            return false;
+        }
+
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int stepX = Math.max(1, width / 10);
+        int stepY = Math.max(1, height / 10);
+        long totalLuma = 0;
+        int sampled = 0;
+
+        for (int x = 0; x < width; x += stepX) {
+            for (int y = 0; y < height; y += stepY) {
+                int pixel = bitmap.getPixel(x, y);
+                int r = (pixel >> 16) & 0xFF;
+                int g = (pixel >> 8) & 0xFF;
+                int b = pixel & 0xFF;
+                int luma = (r * 299 + g * 587 + b * 114) / 1000;
+                totalLuma += luma;
+                sampled++;
+            }
+        }
+
+        if (sampled == 0) return false;
+        float avgLuma = totalLuma / (float) sampled;
+        return avgLuma >= 12f; // Reject pitch dark images
+    }
+
+    private void processLegacyYoloFrame(@NonNull ImageProxy image) {
+        if (isProcessingQueue.get()) {
+            image.close();
+            return;
+        }
+
         PerformanceProfiler.startScan();
         PerformanceProfiler.start("Camera Frame");
         PerformanceProfiler.log("Camera Frame", "Frame Number: " + image.hashCode());
@@ -253,10 +481,10 @@ public final class CameraController {
             if (bitmap == null) return;
 
             PerformanceProfiler.start("YOLO");
+            yoloInferenceCount.incrementAndGet(); // Increment YOLO counter
             List<DetectionResult> detections = yoloDetector.detect(bitmap);
             PerformanceProfiler.end("YOLO");
 
-            // 🚀 STAGE 14: Overlay
             PerformanceProfiler.start("Overlay Draw");
             updateOverlay(detections, bitmap.getWidth(), bitmap.getHeight());
             PerformanceProfiler.end("Overlay Draw");
@@ -268,8 +496,6 @@ public final class CameraController {
                 return;
             }
 
-            // 🚀 STABILITY TRACKING (New Logic)
-            // Use the top detection to check stability
             DetectionResult topDetection = detections.get(0);
             PerformanceProfiler.start("Bounding Stability");
             boolean justBecameStable = stabilityTracker.update(topDetection);
@@ -284,11 +510,9 @@ public final class CameraController {
             PerformanceProfiler.log("Bounding Stability", "Stable after " + stabilityTracker.getFrameCount() + " frames");
             PerformanceProfiler.end("Bounding Stability");
 
-            // 🚀 START PROCESSING QUEUE IF IDLE
             if (isProcessingQueue.compareAndSet(false, true)) {
                 PerformanceProfiler.lock();
                 PerformanceProfiler.log("Queue Profiling", "Preview Paused");
-                // If we just became stable, or we are stable and idle, process.
                 List<DetectionResult> validDetections = new ArrayList<>();
                 for (DetectionResult det : detections) {
                     if (det.getConfidence() > 0.5f) {
@@ -302,15 +526,15 @@ public final class CameraController {
 
                     validDetections.sort((a, b) -> Float.compare(b.getConfidence(), a.getConfidence()));
                     int limit = Math.min(validDetections.size(), 3);
-                    
+
                     List<DetectionResult> targetDetections = new ArrayList<>();
                     for (int i = 0; i < limit; i++) {
                         targetDetections.add(validDetections.get(i));
                     }
-                    
+
                     currentProcessingBitmap = bitmap;
                     processDetectionsParallel(targetDetections);
-                    return; 
+                    return;
                 } else {
                     isProcessingQueue.set(false);
                 }
@@ -343,8 +567,7 @@ public final class CameraController {
                 if (currentProcessingBitmap != null && !currentProcessingBitmap.isRecycled()) {
                     width = currentProcessingBitmap.getWidth();
                     height = currentProcessingBitmap.getHeight();
-                    
-                    // 🚀 SCALE NORMALIZED -> PIXELS for cropping
+
                     float left = normBox.left * width;
                     float top = normBox.top * height;
                     float right = normBox.right * width;
@@ -366,7 +589,6 @@ public final class CameraController {
 
             if (cropped != null) {
                 Log.d("PIPELINE_TRACE", "5. OCR Task Submitted");
-                // Downscale for OCR performance
                 Bitmap ocrInput = BitmapUtils.scaleToWidth(cropped, 640);
                 if (ocrInput != cropped) {
                     BitmapUtils.safeRecycle(cropped);
@@ -386,7 +608,6 @@ public final class CameraController {
                         }
                     }
 
-                    // Check if all parallel tasks are done
                     synchronized (pipelineLock) {
                         if (pendingCount.decrementAndGet() == 0) {
                             Log.d("PIPELINE_TRACE", "All parallel OCR tasks finished. Resetting queue.");
@@ -412,12 +633,6 @@ public final class CameraController {
         }
     }
 
-    private void processNext() {
-        // Method preserved but unused in parallel mode.
-        // Cleaned up for production.
-        resetPipeline();
-    }
-
     @OptIn(markerClass = ExperimentalLensFacing.class)
     private void updateOverlay(List<DetectionResult> detections, int bitmapW, int bitmapH) {
         if (overlayView == null) return;
@@ -427,18 +642,13 @@ public final class CameraController {
 
         if (viewW <= 0 || viewH <= 0 || bitmapW <= 0 || bitmapH <= 0) return;
 
-        // 🚀 CALCULATE FILL_CENTER SCALE
         float scale = Math.max(viewW / (float) bitmapW, viewH / (float) bitmapH);
         float scaledW = bitmapW * scale;
         float scaledH = bitmapH * scale;
 
-        // 🚀 CALCULATE OFFSETS (Centering)
         float offsetX = (scaledW - viewW) / 2f;
         float offsetY = (scaledH - viewH) / 2f;
 
-        // 🚀 MIRRORING DETECTION
-        // Kiosk external cameras often behave like front-facing cameras or
-        // come mirrored by default. We enable mirroring if it's front OR external.
         boolean isMirrored = false;
         try {
             if (camera != null) {
@@ -450,7 +660,7 @@ public final class CameraController {
 
         List<RectF> mappedBoxes = new ArrayList<>();
         for (DetectionResult det : detections) {
-            RectF box = det.getBoundingBox(); // Normalized [0, 1]
+            RectF box = det.getBoundingBox();
 
             float left = (box.left * scaledW) - offsetX;
             float top = (box.top * scaledH) - offsetY;
@@ -478,8 +688,6 @@ public final class CameraController {
                             @NonNull PreviewView previewView) {
 
         previewView.post(() -> {
-            // 🚀 PERFORMANCE FIX: Use PERFORMANCE mode (SurfaceView) instead of COMPATIBLE (TextureView)
-            // SurfaceView is much more efficient and reduces stuttering significantly on kiosk hardware.
             previewView.setImplementationMode(PreviewView.ImplementationMode.PERFORMANCE);
 
             ListenableFuture<ProcessCameraProvider> future =
@@ -562,9 +770,6 @@ public final class CameraController {
 
         CameraSelector selector = createCameraSelector();
 
-        // 🚀 RESOLUTION STRATEGY: 
-        // Use 1080p for analysis to handle shop glare and high-quality sensors.
-        // FALLBACK_RULE_CLOSEST_LOWER ensures compatibility if 1080p is not supported.
         ResolutionSelector resSelector = new ResolutionSelector.Builder()
                 .setResolutionStrategy(new ResolutionStrategy(
                         CameraConfig.ANALYSIS_RESOLUTION,
@@ -605,8 +810,6 @@ public final class CameraController {
             }
         } catch (Exception e) {
             LogUtils.e("Primary camera bind failed (1080p/RGBA), retrying with safe fallback (720p/YUV)", e);
-            // 🚀 EMULATOR & COMPATIBILITY FALLBACK: 
-            // If high resolution or RGBA fails, try 720p with YUV which is most supported.
             try {
                 cameraProvider.unbindAll();
 
@@ -615,7 +818,7 @@ public final class CameraController {
                                 new android.util.Size(1280, 720),
                                 ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER))
                         .build();
-                
+
                 imageAnalysis = new ImageAnalysis.Builder()
                         .setResolutionSelector(fallbackResSelector)
                         .setBackpressureStrategy(CameraConfig.BACKPRESSURE_STRATEGY)
