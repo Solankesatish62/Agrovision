@@ -10,9 +10,11 @@ import androidx.room.TypeConverters;
 import com.agrovision.kiosk.data.database.converter.StringListConverter;
 import com.agrovision.kiosk.data.database.dao.AdvertisementDao;
 import com.agrovision.kiosk.data.database.dao.MedicineDao;
+import com.agrovision.kiosk.data.database.dao.SuccessfulScanDao;
 import com.agrovision.kiosk.data.database.dao.UnknownDetectionDao;
 import com.agrovision.kiosk.data.database.entity.AdvertisementEntity;
 import com.agrovision.kiosk.data.database.entity.MedicineEntity;
+import com.agrovision.kiosk.data.database.entity.SuccessfulScanEntity;
 import com.agrovision.kiosk.data.database.entity.UnknownDetectionEntity;
 
 /**
@@ -34,9 +36,10 @@ import com.agrovision.kiosk.data.database.entity.UnknownDetectionEntity;
         entities = {
                 MedicineEntity.class,
                 UnknownDetectionEntity.class,
+                SuccessfulScanEntity.class,
                 AdvertisementEntity.class
         },
-        version = 6,
+        version = 7,
         exportSchema = false
 )
 @TypeConverters({
@@ -88,6 +91,11 @@ public abstract class AppDatabase extends RoomDatabase {
      * Provides access to Unknown Detection DAO.
      */
     public abstract UnknownDetectionDao unknownDetectionDao();
+
+    /**
+     * Provides access to Successful Scan DAO.
+     */
+    public abstract SuccessfulScanDao successfulScanDao();
 
     /**
      * Provides access to Advertisement DAO.

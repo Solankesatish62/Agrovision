@@ -3,6 +3,8 @@ package com.agrovision.kiosk.pipeline;
 import android.content.Context;
 import android.util.Log;
 
+import com.agrovision.kiosk.analytics.EventTracker;
+import com.agrovision.kiosk.analytics.events.MvpEvent;
 import com.agrovision.kiosk.data.model.Medicine;
 import com.agrovision.kiosk.data.repository.MedicineRepository;
 import com.agrovision.kiosk.network.PortalScraper;
@@ -30,6 +32,7 @@ import java.util.Map;
 public final class RecognitionPipelineOrchestrator {
 
     private static final String TAG = "RecognitionPipelineOrchestrator";
+    private final Context appContext;
     private final MedicineRepository repository;
     private List<Medicine> medicineCatalog;
 
@@ -44,7 +47,8 @@ public final class RecognitionPipelineOrchestrator {
     }
 
     public RecognitionPipelineOrchestrator(Context context) {
-        this.repository = MedicineRepository.getInstance(context);
+        this.appContext = context.getApplicationContext();
+        this.repository = MedicineRepository.getInstance(appContext);
         this.medicineCatalog = repository.getAll();
         
         this.repository.addOnCatalogUpdateListener(newCatalog -> {
@@ -131,12 +135,7 @@ public final class RecognitionPipelineOrchestrator {
      * 100% Offline Matching.
      */
     public List<ScanResult> resolve(List<String> normalizedTexts, com.agrovision.kiosk.camera.ScanMetrics metrics) {
-        long matchStartMs = android.os.SystemClock.elapsedRealtime();
-        List<ScanResult> results = resolve(normalizedTexts);
-        if (metrics != null) {
-            metrics.matchingMs = android.os.SystemClock.elapsedRealtime() - matchStartMs;
-        }
-        return results;
+        return resolveInternal(normalizedTexts, metrics);
     }
 
     /**
@@ -144,6 +143,10 @@ public final class RecognitionPipelineOrchestrator {
      * 100% Offline Matching.
      */
     public List<ScanResult> resolve(List<String> normalizedTexts) {
+        return resolveInternal(normalizedTexts, null);
+    }
+
+    private List<ScanResult> resolveInternal(List<String> normalizedTexts, com.agrovision.kiosk.camera.ScanMetrics metrics) {
         PerformanceProfiler.start("Pipeline Resolve");
         Log.d("PIPELINE_TRACE", "9a. Orchestrator resolving " + (normalizedTexts != null ? normalizedTexts.size() : 0) + " items");
         
@@ -163,11 +166,14 @@ public final class RecognitionPipelineOrchestrator {
                 continue;
             }
 
-            MatchResult match = MedicineMatcher.match(text, medicineCatalog);
+            MatchResult match = MedicineMatcher.match(text, medicineCatalog, metrics);
             ScanResult scanResult;
             if (match.isMatched() && match.getMedicine() != null) {
                 Medicine medicine = match.getMedicine();
                 List<ResultInfoItem> infoItems = ResultInfoMapper.fromMedicine(medicine);
+
+                EventTracker.getInstance(appContext).track(MvpEvent.MATCH_SUCCESS);
+                repository.logSuccessfulScan(medicine.getId());
 
                 scanResult = new ScanResult(
                         ResultType.KNOWN,
@@ -182,7 +188,9 @@ public final class RecognitionPipelineOrchestrator {
                         match.isLowConfidence()
                 );
             } else {
+                EventTracker.getInstance(appContext).track(MvpEvent.MATCH_CONFIDENCE_LOW);
                 repository.logUnknownDetection(text, null);
+
                 scanResult = new ScanResult(
                         ResultType.UNKNOWN,
                         null,

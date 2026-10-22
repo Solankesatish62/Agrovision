@@ -21,6 +21,15 @@ public final class ScanMetrics {
     public long matchingMs;
     public long totalMs;
 
+    // Millisecond sub-phase breakdown for Phase 7 (Medicine Matching)
+    public long matchIndexMs;
+    public long matchTokenizeMs;
+    public long matchLookupMs;
+    public long matchScoringMs;
+    public long matchSortMs;
+    public int candidateCount;
+    public int totalCatalogSize;
+
     public boolean success = false;
     public String matchedMedicineName;
 
@@ -45,6 +54,15 @@ public final class ScanMetrics {
         sb.append(String.format(Locale.US, "  • Phase 5: ML Kit OCR Processing                 : %d ms\n", ocrMs));
         sb.append(String.format(Locale.US, "  • Phase 6: Text Cleaning & Normalization        : %d ms\n", normMs));
         sb.append(String.format(Locale.US, "  • Phase 7: Medicine Matching (Catalog Search)   : %d ms\n", matchingMs));
+        if (matchingMs > 0 || candidateCount > 0) {
+            sb.append(String.format(Locale.US, "      └─ Indexing Check / Build       : %d ms\n", matchIndexMs));
+            sb.append(String.format(Locale.US, "      └─ Text Cleaning & Tokenization : %d ms\n", matchTokenizeMs));
+            sb.append(String.format(Locale.US, "      └─ Inverted Index Search        : %d ms (Selected %d/%d catalog items)\n",
+                    matchLookupMs, candidateCount, totalCatalogSize));
+            sb.append(String.format(Locale.US, "      └─ Candidate Scoring & Matching : %d ms (Evaluated %d candidates)\n",
+                    matchScoringMs, candidateCount));
+            sb.append(String.format(Locale.US, "      └─ Ranking & Gap Analysis       : %d ms\n", matchSortMs));
+        }
         sb.append("------------------------------------------------------------------------\n");
         if (success) {
             sb.append(String.format(Locale.US, "✅ SUCCESSFUL SCAN MATCH: \"%s\"\n", matchedMedicineName != null ? matchedMedicineName : "Known Medicine"));

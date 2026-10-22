@@ -265,4 +265,14 @@ public class RoiScanningTest {
         assertEquals(ScanMode.LEGACY_YOLO, scanMode);
         assertEquals(1, yoloInferenceCalls.get());
     }
+
+    @Test
+    public void test12_MedicineMatcherLogsDetailedAnalysis() {
+        MatchResult match = MedicineMatcher.match("CORAGEN 18.5 SC FMC", testCatalog);
+
+        assertTrue("Should successfully match CORAGEN", match.isMatched());
+        assertNotNull("Matched medicine must not be null", match.getMedicine());
+        assertEquals("CORAGEN", match.getMedicine().getName());
+        assertTrue("Confidence score should be high for exact token matches", match.getConfidence() >= 0.82f);
+    }
 }

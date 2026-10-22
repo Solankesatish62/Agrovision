@@ -6,11 +6,11 @@ import android.util.Log;
 import com.agrovision.kiosk.data.database.AppDatabase;
 import com.agrovision.kiosk.data.database.dao.MedicineDao;
 import com.agrovision.kiosk.data.database.entity.MedicineEntity;
+import com.agrovision.kiosk.data.database.entity.SuccessfulScanEntity;
 import com.agrovision.kiosk.data.database.entity.UnknownDetectionEntity;
 import com.agrovision.kiosk.data.mapper.MedicineMapper;
 import com.agrovision.kiosk.data.model.Medicine;
 import com.agrovision.kiosk.threading.IoExecutor;
-import com.agrovision.kiosk.util.LogUtils;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.FirebaseFirestoreSettings;
@@ -259,6 +259,39 @@ public final class MedicineRepository {
     private final Map<String, Long> loggedUnknowns = new HashMap<>();
     private static final long UNKNOWN_LOG_COOLDOWN_MS = 3600_000; // 1 hour
 
+    public void logSuccessfulScan(String medicineId) {
+        if (medicineId == null || medicineId.isEmpty()) return;
+
+        long now = System.currentTimeMillis();
+        IoExecutor.submit(() -> {
+            try {
+                AppDatabase db = AppDatabase.getInstance(appContext);
+                SuccessfulScanEntity entity = new SuccessfulScanEntity();
+                entity.medicineId = medicineId;
+                entity.timestamp = now;
+                db.successfulScanDao().insert(entity);
+                Log.i(TAG, "Database: Logged successful scan into Room for " + medicineId);
+            } catch (Exception e) {
+                Log.e(TAG, "Database: Failed to insert successful scan", e);
+            }
+
+            try {
+                Map<String, Object> data = new HashMap<>();
+                data.put("medicineId", medicineId);
+                data.put("timestamp", now);
+                data.put("deviceId", android.os.Build.MODEL);
+                data.put("shopId", appContext.getSharedPreferences("kiosk_settings", Context.MODE_PRIVATE)
+                        .getString("shop_mobile", "910000000000"));
+
+                firestore.collection("successful_scans")
+                        .add(data)
+                        .addOnSuccessListener(ref -> Log.i(TAG, "Cloud: Logged successful scan analytics for " + medicineId));
+            } catch (Exception e) {
+                Log.e(TAG, "Cloud: Failed to log successful scan analytics", e);
+            }
+        });
+    }
+
     public void logUnknownDetection(String rawOcrText, String imagePath) {
         if (rawOcrText == null || rawOcrText.trim().length() < 3) return;
 
@@ -276,18 +309,33 @@ public final class MedicineRepository {
         }
 
         IoExecutor.submit(() -> {
-            Map<String, Object> data = new HashMap<>();
-            data.put("ocrText", rawOcrText);
-            data.put("timestamp", now);
-            data.put("status", "pending_review");
-            data.put("deviceId", android.os.Build.MODEL);
-            data.put("imagePath", imagePath);
+            try {
+                AppDatabase db = AppDatabase.getInstance(appContext);
+                UnknownDetectionEntity entity = new UnknownDetectionEntity(rawOcrText, imagePath, now);
+                db.unknownDetectionDao().insert(entity);
+                Log.i(TAG, "Database: Logged unknown detection into Room.");
+            } catch (Exception e) {
+                Log.e(TAG, "Database: Failed to insert unknown detection", e);
+            }
 
-            firestore.collection("unknown_medicines")
-                    .add(data)
-                    .addOnSuccessListener(documentReference -> {
-                        Log.i(TAG, "Cloud: Logged unknown medicine for review.");
-                    });
+            try {
+                Map<String, Object> data = new HashMap<>();
+                data.put("ocrText", rawOcrText);
+                data.put("timestamp", now);
+                data.put("status", "pending_review");
+                data.put("deviceId", android.os.Build.MODEL);
+                data.put("imagePath", imagePath);
+                data.put("shopId", appContext.getSharedPreferences("kiosk_settings", Context.MODE_PRIVATE)
+                        .getString("shop_mobile", "910000000000"));
+
+                firestore.collection("unknown_medicines")
+                        .add(data)
+                        .addOnSuccessListener(documentReference -> {
+                            Log.i(TAG, "Cloud: Logged unknown medicine for review.");
+                        });
+            } catch (Exception e) {
+                Log.e(TAG, "Cloud: Failed to log unknown medicine analytics", e);
+            }
         });
     }
 

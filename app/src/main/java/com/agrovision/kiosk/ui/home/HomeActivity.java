@@ -177,6 +177,9 @@ public final class HomeActivity extends AppCompatActivity
         
         // 🚀 ENSURE DETECTION IS RESUMED after ads or result screens
         cameraController.setDetectionEnabled(true);
+        if (overlayView != null) {
+            overlayView.setScanPhase(ScanPhase.SCANNING);
+        }
         
         // 🚀 CRITICAL FIX: Reset the pipeline lock to prevent deadlocks from previous activities
         cameraController.resetPipeline();
@@ -188,6 +191,11 @@ public final class HomeActivity extends AppCompatActivity
         if (progressScanner != null) {
             progressScanner.setVisibility(View.GONE);
         }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
     }
 
     private void checkCameraPermission() {
@@ -228,6 +236,16 @@ public final class HomeActivity extends AppCompatActivity
         }
 
         findViewById(R.id.btnSettings).setOnClickListener(v -> showSettingsDialog());
+
+        View btnShowOurProducts = findViewById(R.id.btnShowOurProducts);
+        if (btnShowOurProducts != null) {
+            btnShowOurProducts.setOnClickListener(v -> launchAdScreen());
+        }
+
+        View cardPromoBanner = findViewById(R.id.cardPromoBanner);
+        if (cardPromoBanner != null) {
+            cardPromoBanner.setOnClickListener(v -> launchAdScreen());
+        }
     }
 
     private void setupSearchAutocomplete() {
@@ -385,6 +403,9 @@ public final class HomeActivity extends AppCompatActivity
         runOnUiThread(() -> {
             if (progressScanner != null) {
                 progressScanner.setVisibility(View.VISIBLE);
+            }
+            if (overlayView != null) {
+                overlayView.setScanPhase(ScanPhase.MATCHING);
             }
         });
 
@@ -627,6 +648,9 @@ public final class HomeActivity extends AppCompatActivity
             if (progressScanner != null) {
                 progressScanner.setVisibility(View.VISIBLE);
             }
+            if (overlayView != null) {
+                overlayView.setScanPhase(ScanPhase.MATCHING);
+            }
         });
 
         // 🚀 ORCHESTRATE BARCODE SCAN
@@ -719,6 +743,12 @@ public final class HomeActivity extends AppCompatActivity
         }
 
         // 🚀 PERFORM HEAVY RESOLUTION ON BACKGROUND THREAD
+        runOnUiThread(() -> {
+            if (overlayView != null) {
+                overlayView.setScanPhase(ScanPhase.MATCHING);
+            }
+        });
+
         MatchingExecutor.submit(() -> {
             Log.d("PIPELINE_TRACE", "9. Resolving medicines on background thread...");
             List<ScanResult> results = pipeline.resolve(normalizedTexts, metrics);
@@ -755,6 +785,9 @@ public final class HomeActivity extends AppCompatActivity
                             isScanLocked = false;
                         }
                         cameraController.setDetectionEnabled(true);
+                        if (overlayView != null) {
+                            overlayView.setScanPhase(ScanPhase.SCANNING);
+                        }
                         PerformanceProfiler.end("HomeActivity.onScanCompleted");
                         return;
                     }
@@ -806,6 +839,9 @@ public final class HomeActivity extends AppCompatActivity
     }
 
     private void launchResultScreen(List<ScanResult> results) {
+        if (overlayView != null) {
+            overlayView.setScanPhase(ScanPhase.RESULT_SHOWING);
+        }
         PerformanceProfiler.start("launchResultScreen");
         PerformanceProfiler.log("launchResultScreen", "Method Enter");
         Intent intent = new Intent(this, ResultActivity.class);
@@ -854,6 +890,9 @@ public final class HomeActivity extends AppCompatActivity
                 isScanLocked = false;
             }
             cameraController.setDetectionEnabled(true);
+            if (overlayView != null) {
+                overlayView.setScanPhase(ScanPhase.SCANNING);
+            }
         }
     }
 
