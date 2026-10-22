@@ -8,6 +8,7 @@ import com.agrovision.kiosk.analytics.events.MvpEvent;
 import com.agrovision.kiosk.data.model.Medicine;
 import com.agrovision.kiosk.data.repository.MedicineRepository;
 import com.agrovision.kiosk.network.PortalScraper;
+import com.agrovision.kiosk.threading.MatchingExecutor;
 import com.agrovision.kiosk.ui.result.mapper.ResultInfoMapper;
 import com.agrovision.kiosk.ui.result.model.ResultInfoItem;
 import com.agrovision.kiosk.ui.result.model.ResultType;
@@ -50,10 +51,18 @@ public final class RecognitionPipelineOrchestrator {
         this.appContext = context.getApplicationContext();
         this.repository = MedicineRepository.getInstance(appContext);
         this.medicineCatalog = repository.getAll();
-        
+
+        if (this.medicineCatalog != null && !this.medicineCatalog.isEmpty()) {
+            List<Medicine> initialCatalog = this.medicineCatalog;
+            MatchingExecutor.submit(() -> MedicineMatcher.prepareIndex(initialCatalog));
+        }
+
         this.repository.addOnCatalogUpdateListener(newCatalog -> {
-            Log.i(TAG, "Catalog updated. New size: " + newCatalog.size());
+            Log.i(TAG, "Catalog updated. New size: " + (newCatalog != null ? newCatalog.size() : 0));
             this.medicineCatalog = newCatalog;
+            if (newCatalog != null && !newCatalog.isEmpty()) {
+                MatchingExecutor.submit(() -> MedicineMatcher.prepareIndex(newCatalog));
+            }
         });
     }
 

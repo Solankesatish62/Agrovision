@@ -38,8 +38,12 @@ public final class MedicineMatcher {
             "insecticide", "fungicide", "herbicide", "pesticide", "liquid", "powder"
     );
 
+    private static final java.util.regex.Pattern NON_ALPHANUM_DOT = java.util.regex.Pattern.compile("[^a-z0-9.]");
+    private static final java.util.regex.Pattern WHITESPACE = java.util.regex.Pattern.compile("\\s+");
+
     private static final Map<String, List<String>> TOKEN_CACHE = new HashMap<>();
-    private static List<Medicine> lastIndexedCatalog = null;
+    private static volatile List<Medicine> lastIndexedCatalog = null;
+    private static volatile String lastIndexedFingerprint = null;
     private static final Map<String, Set<Medicine>> INVERTED_INDEX = new HashMap<>();
     private static final Map<String, Set<Medicine>> NUMERIC_INDEX = new HashMap<>();
 
@@ -62,14 +66,87 @@ public final class MedicineMatcher {
         }
     }
 
+    private static boolean containsDigit(String s) {
+        if (s == null) return false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= '0' && c <= '9') return true;
+        }
+        return false;
+    }
+
+    private static String extractDigits(String s) {
+        if (s == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= '0' && c <= '9') {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static boolean isSingleDigit(String token) {
+        return token != null && token.length() == 1 && token.charAt(0) >= '0' && token.charAt(0) <= '9';
+    }
+
+    private static String computeCatalogFingerprint(List<Medicine> medicines) {
+        if (medicines == null || medicines.isEmpty()) return "empty";
+        long hash = 17;
+        hash = 31 * hash + medicines.size();
+
+        Medicine first = medicines.get(0);
+        Medicine last = medicines.get(medicines.size() - 1);
+        Medicine mid = medicines.get(medicines.size() / 2);
+
+        hash = 31 * hash + (first.getId() != null ? first.getId().hashCode() : 0);
+        hash = 31 * hash + first.getUpdatedAt();
+        hash = 31 * hash + (last.getId() != null ? last.getId().hashCode() : 0);
+        hash = 31 * hash + last.getUpdatedAt();
+        hash = 31 * hash + (mid.getId() != null ? mid.getId().hashCode() : 0);
+        hash = 31 * hash + mid.getUpdatedAt();
+
+        return medicines.size() + "_" + hash;
+    }
+
+    /**
+     * Pre-builds the inverted index asynchronously or synchronously on catalog load.
+     * Prevents scan latency on the first user frame scan.
+     */
+    public static void prepareIndex(List<Medicine> medicines) {
+        long startMs = getElapsedRealtime();
+        ensureIndexed(medicines);
+        long totalMs = getElapsedRealtime() - startMs;
+        logSafe(LOG_TAG, "prepareIndex completed in " + totalMs + " ms for catalog size: " + (medicines != null ? medicines.size() : 0));
+    }
+
     private static synchronized void ensureIndexed(List<Medicine> medicines) {
-        if (medicines == null || medicines == lastIndexedCatalog) return;
+        long lockStartMs = getElapsedRealtime();
+        if (medicines == null || medicines.isEmpty()) return;
+
+        if (medicines == lastIndexedCatalog) {
+            logSafe(LOG_TAG, "Indexing check: Cache HIT (Reference match, " + medicines.size() + " items)");
+            return;
+        }
+
+        String fingerprint = computeCatalogFingerprint(medicines);
+        if (fingerprint.equals(lastIndexedFingerprint)) {
+            lastIndexedCatalog = medicines;
+            logSafe(LOG_TAG, "Indexing check: Cache HIT (Fingerprint match: " + fingerprint + ", " + medicines.size() + " items)");
+            return;
+        }
+
+        long buildStartMs = getElapsedRealtime();
+        long lockWaitMs = buildStartMs - lockStartMs;
 
         PerformanceProfiler.start("Matcher Indexing");
         INVERTED_INDEX.clear();
         NUMERIC_INDEX.clear();
         TOKEN_CACHE.clear();
-        
+
+        int totalTokensIndexed = 0;
+
         for (Medicine m : medicines) {
             Set<String> tokens = new HashSet<>();
             tokens.addAll(tokenize(m.getName()));
@@ -85,17 +162,26 @@ public final class MedicineMatcher {
             for (String token : tokens) {
                 String lowerToken = token.toLowerCase(Locale.ROOT);
                 INVERTED_INDEX.computeIfAbsent(lowerToken, k -> new HashSet<>()).add(m);
-                
-                if (lowerToken.matches(".*\\d.*")) {
-                    String numbersOnly = lowerToken.replaceAll("[^0-9]", "");
+                totalTokensIndexed++;
+
+                if (containsDigit(lowerToken)) {
+                    String numbersOnly = extractDigits(lowerToken);
                     if (!numbersOnly.isEmpty()) {
                         NUMERIC_INDEX.computeIfAbsent(numbersOnly, k -> new HashSet<>()).add(m);
                     }
                 }
             }
         }
+
         lastIndexedCatalog = medicines;
+        lastIndexedFingerprint = fingerprint;
+
         PerformanceProfiler.end("Matcher Indexing");
+        long buildMs = getElapsedRealtime() - buildStartMs;
+
+        logSafe(LOG_TAG, String.format(Locale.ROOT,
+                "Indexing check: Cache MISS -> Rebuilt index for %d medicines (%d token entries, inverted keys: %d, numeric keys: %d) in %d ms (Lock wait: %d ms)",
+                medicines.size(), totalTokensIndexed, INVERTED_INDEX.size(), NUMERIC_INDEX.size(), buildMs, lockWaitMs));
     }
 
     public static class CandidateDetail implements Comparable<CandidateDetail> {
@@ -198,8 +284,8 @@ public final class MedicineMatcher {
                 candidateSet.addAll(matches);
             }
             
-            if (lowerToken.matches(".*\\d.*")) {
-                String numbersOnly = lowerToken.replaceAll("[^0-9]", "");
+            if (containsDigit(lowerToken)) {
+                String numbersOnly = extractDigits(lowerToken);
                 if (numbersOnly.length() >= 2 && !isCommonGenericNumber(numbersOnly)) {
                     Set<Medicine> numMatches = NUMERIC_INDEX.get(numbersOnly);
                     if (numMatches != null) {
@@ -485,7 +571,7 @@ public final class MedicineMatcher {
     private static float getTokenWeight(String token) {
         String lower = token.toLowerCase(Locale.ROOT);
         if (GENERIC_TOKENS.contains(lower)) return GENERIC_PENALTY;
-        if (lower.matches(".*\\d.*")) return NUMERIC_BONUS;
+        if (containsDigit(lower)) return NUMERIC_BONUS;
         return 1.0f;
     }
 
@@ -512,21 +598,22 @@ public final class MedicineMatcher {
 
     private static String cleanOcrText(String text) {
         if (text == null) return "";
-        return text.toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9.]", " ")
-                .replaceAll("\\s+", " ")
-                .trim();
+        String lower = text.toLowerCase(Locale.ROOT);
+        String cleaned = NON_ALPHANUM_DOT.matcher(lower).replaceAll(" ");
+        return WHITESPACE.matcher(cleaned).replaceAll(" ").trim();
     }
 
     private static List<String> tokenize(String text) {
         if (text == null) return new ArrayList<>();
-        String cleaned = text.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9.]", " ").trim();
-        String[] parts = cleaned.split("\\s+");
-        List<String> tokens = new ArrayList<>();
+        String lower = text.toLowerCase(Locale.ROOT);
+        String cleaned = NON_ALPHANUM_DOT.matcher(lower).replaceAll(" ").trim();
+        if (cleaned.isEmpty()) return new ArrayList<>();
+        String[] parts = WHITESPACE.split(cleaned);
+        Set<String> tokenSet = new java.util.LinkedHashSet<>(parts.length);
         for (String token : parts) {
-            if (token.length() < 2 && !token.matches("\\d")) continue;
-            if (!tokens.contains(token)) tokens.add(token);
+            if (token.length() < 2 && !isSingleDigit(token)) continue;
+            tokenSet.add(token);
         }
-        return tokens;
+        return new ArrayList<>(tokenSet);
     }
 }
